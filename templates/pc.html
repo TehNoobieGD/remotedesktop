@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Remote PC Host</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body class="pc-page">
+  <main class="container host-shell">
+    <h1>PC Host Panel</h1>
+    <p class="muted">Create one room on this PC. Mobile can join and control through the desktop agent.</p>
+
+    <section id="create-section" class="card">
+      <h2>Create Room</h2>
+      <div class="row">
+        <label for="pc-name">PC Name</label>
+        <input id="pc-name" type="text" maxlength="60" value="My PC" />
+      </div>
+      <div class="row">
+        <label for="room-password">Room Password</label>
+        <input id="room-password" type="password" minlength="4" />
+      </div>
+      <button id="create-room-btn">Create Room</button>
+    </section>
+
+    <section id="room-section" class="card hidden">
+      <h2>Active Room</h2>
+      <p><strong>PC Name:</strong> <span id="room-pc-name">-</span></p>
+      <p><strong>Room Code:</strong> <span id="room-code">-</span></p>
+      <p><strong>Agent:</strong> <span id="agent-status">offline</span></p>
+      <button id="close-room-btn" class="danger">Close Room</button>
+    </section>
+
+    <section class="card">
+      <h2>Connected Mobile Devices</h2>
+      <ul id="device-list" class="device-list"></ul>
+      <p id="empty-devices" class="muted">No mobile devices connected.</p>
+    </section>
+
+    <section class="card">
+      <h2>Run Agent On This PC</h2>
+      <p class="muted">Start this after creating room:</p>
+      <pre><code>python agent.py --server https://your-app.onrender.com --room CODE --password YOUR_PASSWORD</code></pre>
+    </section>
+
+    <p id="status-line" class="status-line"></p>
+  </main>
+  <script src="/static/pc.js"></script>
+</body>
+</html>
