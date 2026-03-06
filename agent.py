@@ -231,6 +231,8 @@ def capture_frame_with_cursor(config: StreamConfig) -> dict | None:
             return {
                 "jpeg": jpeg_b64,
                 "monitor_id": selected_id,
+                "monitor_width": int(mon["width"]),
+                "monitor_height": int(mon["height"]),
                 "cursor": cursor_payload,
                 "monitors": monitor_map,
                 "follow_cursor": config.follow_cursor,
@@ -389,6 +391,8 @@ async def stream_screen(ws, config: StreamConfig, fps: int = 5) -> None:
                         "ts": time.time(),
                         "cursor": frame["cursor"],
                         "monitor_id": frame["monitor_id"],
+                        "monitor_width": frame["monitor_width"],
+                        "monitor_height": frame["monitor_height"],
                     }
                 )
             )

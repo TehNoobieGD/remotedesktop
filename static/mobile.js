@@ -18,6 +18,8 @@ const cursorDot = document.getElementById("cursor-dot");
 const monitorSelect = document.getElementById("monitor-select");
 const followCursorToggle = document.getElementById("follow-cursor-toggle");
 const audioToggle = document.getElementById("audio-toggle");
+const roomsList = document.getElementById("rooms-list");
+const refreshRoomsBtn = document.getElementById("refresh-rooms-btn");
 
 let ws = null;
 let joined = false;
@@ -28,6 +30,8 @@ let audioAvailable = false;
 let audioEnabled = false;
 let audioCtx = null;
 let audioNextTime = 0;
+let frameMonitorWidth = 0;
+let frameMonitorHeight = 0;
 const activeModifiers = new Set();
 const modifierKeys = new Set(["ctrl", "shift", "alt", "cmd"]);
 
@@ -127,6 +131,8 @@ function onMessage(raw) {
     if (typeof data.jpeg === "string" && data.jpeg.length) {
       screenPreview.src = `data:image/jpeg;base64,${data.jpeg}`;
       previewEmpty.classList.add("hidden");
+      frameMonitorWidth = Number(data.monitor_width || 0);
+      frameMonitorHeight = Number(data.monitor_height || 0);
       paintCursor(data.cursor);
     }
     return;
@@ -210,11 +216,62 @@ function paintCursor(cursor) {
     cursorDot.classList.add("hidden");
     return;
   }
-  const x = Math.max(0, Math.min(1, xNorm)) * screenPreview.clientWidth;
-  const y = Math.max(0, Math.min(1, yNorm)) * screenPreview.clientHeight;
+  const containerW = screenPreview.clientWidth;
+  const containerH = screenPreview.clientHeight;
+  const sourceW = frameMonitorWidth > 0 ? frameMonitorWidth : containerW;
+  const sourceH = frameMonitorHeight > 0 ? frameMonitorHeight : containerH;
+
+  const scale = Math.max(containerW / sourceW, containerH / sourceH);
+  const drawW = sourceW * scale;
+  const drawH = sourceH * scale;
+  const offsetX = (containerW - drawW) / 2;
+  const offsetY = (containerH - drawH) / 2;
+
+  const x = offsetX + Math.max(0, Math.min(1, xNorm)) * drawW;
+  const y = offsetY + Math.max(0, Math.min(1, yNorm)) * drawH;
   cursorDot.style.left = `${x}px`;
   cursorDot.style.top = `${y}px`;
   cursorDot.classList.remove("hidden");
+}
+
+async function refreshRooms() {
+  if (joined) return;
+  try {
+    const res = await fetch("/api/rooms", { cache: "no-store" });
+    const data = await res.json();
+    const rooms = Array.isArray(data.rooms) ? data.rooms : [];
+    renderRoomsList(rooms);
+  } catch (_err) {
+    roomsList.innerHTML = "<li>Could not load rooms.</li>";
+  }
+}
+
+function renderRoomsList(rooms) {
+  roomsList.innerHTML = "";
+  if (!rooms.length) {
+    const li = document.createElement("li");
+    li.textContent = "No active rooms.";
+    roomsList.appendChild(li);
+    return;
+  }
+  for (const room of rooms) {
+    const li = document.createElement("li");
+    const left = document.createElement("div");
+    left.innerHTML = `<div>${room.pc_name} (${room.room_code})</div><div class="meta">Mobiles: ${room.mobile_count} | Agent: ${room.agent_connected ? "online" : "offline"}</div>`;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "Join";
+    btn.addEventListener("click", () => {
+      roomCodeInput.value = room.room_code;
+      const pwd = window.prompt(`Password for ${room.pc_name} (${room.room_code})`);
+      if (!pwd) return;
+      roomPasswordInput.value = pwd;
+      joinBtn.click();
+    });
+    li.appendChild(left);
+    li.appendChild(btn);
+    roomsList.appendChild(li);
+  }
 }
 
 function refreshAudioButton() {
@@ -295,6 +352,8 @@ joinBtn.addEventListener("click", () => {
   lastJoinPayload = payload;
   ws.send(JSON.stringify(payload));
 });
+
+refreshRoomsBtn.addEventListener("click", refreshRooms);
 
 audioToggle.addEventListener("click", async () => {
   if (!joined || !audioAvailable) return;
@@ -453,3 +512,5 @@ window.addEventListener("resize", updateOrientationState);
 
 connect();
 refreshAudioButton();
+refreshRooms();
+setInterval(refreshRooms, 5000);

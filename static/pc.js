@@ -8,11 +8,14 @@ const roomPasswordInput = document.getElementById("room-password");
 const roomCodeEl = document.getElementById("room-code");
 const roomPcNameEl = document.getElementById("room-pc-name");
 const agentStatusEl = document.getElementById("agent-status");
+const audioStatusEl = document.getElementById("audio-status");
+const toggleAudioBtn = document.getElementById("toggle-audio-btn");
 const deviceList = document.getElementById("device-list");
 const emptyDevices = document.getElementById("empty-devices");
 
 let ws = null;
 let roomCreated = false;
+let audioAllowed = false;
 
 function detectPcName() {
   const platform = navigator.platform || "PC";
@@ -64,6 +67,14 @@ function onMessage(raw) {
   }
   if (data.type === "room_status") {
     agentStatusEl.textContent = data.agent_connected ? "online" : "offline";
+    audioAllowed = Boolean(data.audio_allowed);
+    const audioAvailable = Boolean(data.audio_available);
+    audioStatusEl.textContent = audioAllowed ? "enabled" : "disabled";
+    toggleAudioBtn.textContent = audioAllowed ? "Disable Audio For Mobile" : "Enable Audio For Mobile";
+    toggleAudioBtn.disabled = !audioAvailable;
+    if (!audioAvailable) {
+      audioStatusEl.textContent = "unavailable";
+    }
     renderMobiles(data.mobiles || []);
     return;
   }
@@ -84,6 +95,10 @@ function resetUi() {
   roomCodeEl.textContent = "-";
   roomPcNameEl.textContent = "-";
   agentStatusEl.textContent = "offline";
+  audioAllowed = false;
+  audioStatusEl.textContent = "disabled";
+  toggleAudioBtn.textContent = "Enable Audio For Mobile";
+  toggleAudioBtn.disabled = false;
   renderMobiles([]);
 }
 
@@ -130,6 +145,11 @@ closeBtn.addEventListener("click", () => {
   ws.send(JSON.stringify({ type: "close_room" }));
   resetUi();
   setStatus("Room closed.");
+});
+
+toggleAudioBtn.addEventListener("click", () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !roomCreated) return;
+  ws.send(JSON.stringify({ type: "set_audio_allowed", enabled: !audioAllowed }));
 });
 
 connect();

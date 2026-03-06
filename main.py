@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -57,10 +57,13 @@ class Room:
     latest_frame_ts: float | None = None
     latest_frame_cursor: dict[str, Any] | None = None
     latest_frame_monitor_id: int | None = None
+    latest_frame_monitor_width: int | None = None
+    latest_frame_monitor_height: int | None = None
     available_monitors: list[dict[str, Any]] = field(default_factory=list)
     selected_monitor_id: int | None = None
     follow_cursor: bool = True
     audio_available: bool = False
+    audio_allowed: bool = False
 
     def mobile_payload(self) -> list[dict[str, Any]]:
         return [
@@ -97,6 +100,7 @@ def room_status(room: Room) -> dict[str, Any]:
         "selected_monitor_id": room.selected_monitor_id,
         "follow_cursor": room.follow_cursor,
         "audio_available": room.audio_available,
+        "audio_allowed": room.audio_allowed,
         "audio_subscribers": sum(1 for m in room.mobiles.values() if m.audio_enabled),
     }
 
@@ -115,7 +119,19 @@ async def broadcast_screen_frame(room: Room, payload: dict[str, Any]) -> None:
 
 
 def room_audio_needed(room: Room) -> bool:
-    return any(m.audio_enabled for m in room.mobiles.values())
+    return room.audio_allowed and any(m.audio_enabled for m in room.mobiles.values())
+
+
+async def push_agent_config(room: Room) -> None:
+    await safe_send(
+        room.agent_socket,
+        {
+            "type": "agent_config",
+            "monitor_id": room.selected_monitor_id,
+            "follow_cursor": room.follow_cursor,
+            "audio_enabled": room_audio_needed(room),
+        },
+    )
 
 
 async def broadcast_audio_chunk(room: Room, payload: dict[str, Any]) -> None:
@@ -165,6 +181,23 @@ async def pc_page(request: Request) -> HTMLResponse:
 @app.get("/mobile", response_class=HTMLResponse)
 async def mobile_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("mobile.html", {"request": request})
+
+
+@app.get("/api/rooms", response_class=JSONResponse)
+async def list_rooms() -> JSONResponse:
+    payload = []
+    for room in rooms.values():
+        payload.append(
+            {
+                "room_code": room.code,
+                "pc_name": room.pc_name,
+                "agent_connected": room.agent_socket is not None,
+                "mobile_count": len(room.mobiles),
+                "created_at": room.created_at,
+            }
+        )
+    payload.sort(key=lambda r: r["created_at"], reverse=True)
+    return JSONResponse({"rooms": payload})
 
 
 @app.websocket("/ws/pc")
@@ -228,6 +261,13 @@ async def ws_pc(websocket: WebSocket) -> None:
                 current_room = None
             elif msg_type == "ping":
                 await safe_send(websocket, {"type": "pong"})
+            elif msg_type == "set_audio_allowed":
+                if not current_room:
+                    continue
+                enabled = bool(data.get("enabled"))
+                current_room.audio_allowed = enabled
+                await push_agent_config(current_room)
+                await broadcast_room_status(current_room)
             else:
                 await safe_send(websocket, {"type": "error", "message": "Unknown message type."})
     except WebSocketDisconnect:
@@ -306,6 +346,8 @@ async def ws_mobile(websocket: WebSocket) -> None:
                             "ts": room.latest_frame_ts,
                             "cursor": room.latest_frame_cursor,
                             "monitor_id": room.latest_frame_monitor_id,
+                            "monitor_width": room.latest_frame_monitor_width,
+                            "monitor_height": room.latest_frame_monitor_height,
                         },
                     )
                 await broadcast_room_status(room)
@@ -364,18 +406,16 @@ async def ws_mobile(websocket: WebSocket) -> None:
                     await safe_send(websocket, {"type": "error", "message": "Join a room first."})
                     continue
                 enabled = bool(data.get("enabled"))
+                if enabled and not joined_room.audio_allowed:
+                    await safe_send(
+                        websocket,
+                        {"type": "warning", "message": "Host has not enabled audio for this room."},
+                    )
+                    continue
                 mobile_obj = joined_room.mobiles.get(mobile_id)
                 if mobile_obj is not None:
                     mobile_obj.audio_enabled = enabled
-                await safe_send(
-                    joined_room.agent_socket,
-                    {
-                        "type": "agent_config",
-                        "monitor_id": joined_room.selected_monitor_id,
-                        "follow_cursor": joined_room.follow_cursor,
-                        "audio_enabled": room_audio_needed(joined_room),
-                    },
-                )
+                await push_agent_config(joined_room)
                 await broadcast_room_status(joined_room)
             elif msg_type == "ping":
                 await safe_send(websocket, {"type": "pong"})
@@ -427,6 +467,7 @@ async def ws_agent(websocket: WebSocket) -> None:
             },
         )
         await broadcast_room_status(room)
+        await push_agent_config(room)
 
         while True:
             message = await websocket.receive_text()
@@ -457,12 +498,18 @@ async def ws_agent(websocket: WebSocket) -> None:
                     joined_room.latest_frame_ts = float(data.get("ts", time.time()))
                     cursor = data.get("cursor")
                     monitor_id = data.get("monitor_id")
+                    monitor_width = data.get("monitor_width")
+                    monitor_height = data.get("monitor_height")
                     if isinstance(cursor, dict):
                         joined_room.latest_frame_cursor = cursor
                     else:
                         joined_room.latest_frame_cursor = None
                     if isinstance(monitor_id, int):
                         joined_room.latest_frame_monitor_id = monitor_id
+                    if isinstance(monitor_width, (int, float)):
+                        joined_room.latest_frame_monitor_width = int(monitor_width)
+                    if isinstance(monitor_height, (int, float)):
+                        joined_room.latest_frame_monitor_height = int(monitor_height)
                     await broadcast_screen_frame(
                         joined_room,
                         {
@@ -471,6 +518,8 @@ async def ws_agent(websocket: WebSocket) -> None:
                             "ts": joined_room.latest_frame_ts,
                             "cursor": joined_room.latest_frame_cursor,
                             "monitor_id": joined_room.latest_frame_monitor_id,
+                            "monitor_width": joined_room.latest_frame_monitor_width,
+                            "monitor_height": joined_room.latest_frame_monitor_height,
                         },
                     )
             elif msg_type == "audio_chunk" and joined_room is not None:
