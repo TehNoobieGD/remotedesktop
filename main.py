@@ -120,8 +120,8 @@ def is_mobile_user_agent(user_agent: str) -> bool:
     return any(m in ua for m in markers)
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request) -> HTMLResponse | RedirectResponse:
+@app.get("/", response_class=RedirectResponse)
+async def index(request: Request) -> RedirectResponse:
     user_agent = request.headers.get("user-agent", "")
     if is_mobile_user_agent(user_agent):
         return RedirectResponse("/mobile")
@@ -359,4 +359,3 @@ async def ws_agent(websocket: WebSocket) -> None:
             if room.agent_socket is websocket:
                 room.agent_socket = None
                 await broadcast_room_status(room)
-
