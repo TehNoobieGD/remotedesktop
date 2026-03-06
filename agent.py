@@ -364,11 +364,14 @@ def _audio_worker_sounddevice(
     out_queue: queue.Queue[bytes], stop_event: threading.Event, status_queue: queue.Queue[str], sample_rate: int
 ) -> None:
     try:
-        default_out = sd.default.device[1]
-        if default_out is None or int(default_out) < 0:
-            status_queue.put("error:No default output device for WASAPI loopback.")
-            return
-        dev_info = sd.query_devices(default_out)
+        device_idx = _find_sounddevice_loopback_device()
+        if device_idx is None:
+            default_out = sd.default.device[1]
+            if default_out is None or int(default_out) < 0:
+                status_queue.put("error:No WASAPI loopback device available.")
+                return
+            device_idx = int(default_out)
+        dev_info = sd.query_devices(device_idx)
         wasapi = sd.WasapiSettings(loopback=True)
         status_queue.put(f"backend:sounddevice-wasapi ({dev_info['name']})")
 
@@ -388,7 +391,7 @@ def _audio_worker_sounddevice(
                 pass
 
         with sd.InputStream(
-            device=default_out,
+            device=device_idx,
             channels=1,
             samplerate=sample_rate,
             blocksize=1024,
@@ -589,6 +592,7 @@ async def stream_audio(ws, config: StreamConfig) -> None:
     )
     worker.start()
     last_audio_data = time.time()
+    warned_no_data = False
     await ws.send(json.dumps({"type": "audio_state", "available": True, "error": None}))
     try:
         while True:
@@ -622,17 +626,22 @@ async def stream_audio(ws, config: StreamConfig) -> None:
                 pcm = await asyncio.to_thread(pcm_queue.get, True, 1.0)
             except queue.Empty:
                 if time.time() - last_audio_data > 3:
-                    await ws.send(
-                        json.dumps(
-                            {
-                                "type": "audio_state",
-                                "available": False,
-                                "error": "No loopback audio captured yet.",
-                            }
+                    if not warned_no_data:
+                        await ws.send(
+                            json.dumps(
+                                {
+                                    "type": "audio_state",
+                                    "available": True,
+                                    "error": "Waiting for desktop audio output...",
+                                }
+                            )
                         )
-                    )
+                        warned_no_data = True
                 continue
             last_audio_data = time.time()
+            if warned_no_data:
+                warned_no_data = False
+                await ws.send(json.dumps({"type": "audio_state", "available": True, "error": None}))
 
             await ws.send(
                 json.dumps(

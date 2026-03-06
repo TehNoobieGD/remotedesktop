@@ -40,6 +40,8 @@ let pointerActive = false;
 let lastX = 0;
 let lastY = 0;
 const heldKeys = new Set();
+const keyPointerMap = new Map();
+const mousePointerMap = new Map();
 const sensitivity = 1.35;
 
 const layouts = {
@@ -309,7 +311,15 @@ function decodePcm16Base64(base64Text) {
 function handleAudioChunk(data) {
   if (!audioEnabled || !audioCtx) return;
   if (typeof data.pcm16 !== "string" || !data.pcm16.length) return;
-  const pcm = decodePcm16Base64(data.pcm16);
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume().catch(() => {});
+  }
+  let pcm;
+  try {
+    pcm = decodePcm16Base64(data.pcm16);
+  } catch (_err) {
+    return;
+  }
   if (!pcm.length) return;
   const sampleRate = Number(data.sample_rate || 24000);
   const buffer = audioCtx.createBuffer(1, pcm.length, sampleRate);
@@ -338,20 +348,25 @@ function renderKeyboard() {
       btn.style.flex = `${key.units || 1} ${key.units || 1} 0`;
       btn.addEventListener("pointerdown", (event) => {
         event.preventDefault();
+        if (!joined) return;
+        if (typeof btn.setPointerCapture === "function") {
+          try { btn.setPointerCapture(event.pointerId); } catch (_err) {}
+        }
+        keyPointerMap.set(event.pointerId, key.value);
         if (heldKeys.has(key.value)) return;
         heldKeys.add(key.value);
         sendControl({ kind: "key_down", key: key.value });
-        renderKeyboard();
+        btn.classList.add("mod-active");
       });
-      const release = () => {
+      const release = (event) => {
+        if (event && keyPointerMap.has(event.pointerId)) keyPointerMap.delete(event.pointerId);
         if (!heldKeys.has(key.value)) return;
         heldKeys.delete(key.value);
         sendControl({ kind: "key_up", key: key.value });
-        renderKeyboard();
+        btn.classList.remove("mod-active");
       };
       btn.addEventListener("pointerup", release);
       btn.addEventListener("pointercancel", release);
-      btn.addEventListener("pointerleave", release);
       rowEl.appendChild(btn);
     }
     keyboard.appendChild(rowEl);
@@ -363,12 +378,19 @@ function bindHoldButton(btn) {
   if (!button) return;
   btn.addEventListener("pointerdown", (event) => {
     event.preventDefault();
+    if (!joined) return;
+    if (typeof btn.setPointerCapture === "function") {
+      try { btn.setPointerCapture(event.pointerId); } catch (_err) {}
+    }
+    mousePointerMap.set(event.pointerId, button);
     sendControl({ kind: "mouse_button_down", button });
   });
-  const release = () => sendControl({ kind: "mouse_button_up", button });
+  const release = (event) => {
+    if (event && mousePointerMap.has(event.pointerId)) mousePointerMap.delete(event.pointerId);
+    sendControl({ kind: "mouse_button_up", button });
+  };
   btn.addEventListener("pointerup", release);
   btn.addEventListener("pointercancel", release);
-  btn.addEventListener("pointerleave", release);
 }
 
 function startMove(x, y) {
@@ -486,7 +508,36 @@ window.addEventListener("blur", () => {
     sendControl({ kind: "key_up", key });
     heldKeys.delete(key);
   }
+  for (const button of [...mousePointerMap.values()]) {
+    sendControl({ kind: "mouse_button_up", button });
+  }
+  keyPointerMap.clear();
+  mousePointerMap.clear();
   renderKeyboard();
+});
+window.addEventListener("pointerup", (event) => {
+  const key = keyPointerMap.get(event.pointerId);
+  if (key && heldKeys.has(key)) {
+    heldKeys.delete(key);
+    sendControl({ kind: "key_up", key });
+    renderKeyboard();
+  }
+  keyPointerMap.delete(event.pointerId);
+  const button = mousePointerMap.get(event.pointerId);
+  if (button) sendControl({ kind: "mouse_button_up", button });
+  mousePointerMap.delete(event.pointerId);
+});
+window.addEventListener("pointercancel", (event) => {
+  const key = keyPointerMap.get(event.pointerId);
+  if (key && heldKeys.has(key)) {
+    heldKeys.delete(key);
+    sendControl({ kind: "key_up", key });
+    renderKeyboard();
+  }
+  keyPointerMap.delete(event.pointerId);
+  const button = mousePointerMap.get(event.pointerId);
+  if (button) sendControl({ kind: "mouse_button_up", button });
+  mousePointerMap.delete(event.pointerId);
 });
 window.addEventListener("orientationchange", updateOrientationState);
 window.addEventListener("resize", updateOrientationState);
