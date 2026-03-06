@@ -40,6 +40,7 @@ class MobileClient:
     client_id: str
     name: str
     websocket: WebSocket
+    audio_enabled: bool = False
 
 
 @dataclass
@@ -59,6 +60,7 @@ class Room:
     available_monitors: list[dict[str, Any]] = field(default_factory=list)
     selected_monitor_id: int | None = None
     follow_cursor: bool = True
+    audio_available: bool = False
 
     def mobile_payload(self) -> list[dict[str, Any]]:
         return [
@@ -94,6 +96,8 @@ def room_status(room: Room) -> dict[str, Any]:
         "monitors": room.available_monitors,
         "selected_monitor_id": room.selected_monitor_id,
         "follow_cursor": room.follow_cursor,
+        "audio_available": room.audio_available,
+        "audio_subscribers": sum(1 for m in room.mobiles.values() if m.audio_enabled),
     }
 
 
@@ -108,6 +112,16 @@ async def broadcast_room_status(room: Room) -> None:
 async def broadcast_screen_frame(room: Room, payload: dict[str, Any]) -> None:
     for mobile in list(room.mobiles.values()):
         await safe_send(mobile.websocket, payload)
+
+
+def room_audio_needed(room: Room) -> bool:
+    return any(m.audio_enabled for m in room.mobiles.values())
+
+
+async def broadcast_audio_chunk(room: Room, payload: dict[str, Any]) -> None:
+    for mobile in list(room.mobiles.values()):
+        if mobile.audio_enabled:
+            await safe_send(mobile.websocket, payload)
 
 
 def create_room(pc_name: str, password: str) -> Room:
@@ -270,7 +284,7 @@ async def ws_mobile(websocket: WebSocket) -> None:
                 ws_to_room[socket_id] = room.code
                 ws_to_mobile_id[socket_id] = mobile_id
                 room.mobiles[mobile_id] = MobileClient(
-                    client_id=mobile_id, name=mobile_name, websocket=websocket
+                    client_id=mobile_id, name=mobile_name, websocket=websocket, audio_enabled=False
                 )
 
                 await safe_send(
@@ -341,6 +355,25 @@ async def ws_mobile(websocket: WebSocket) -> None:
                         "type": "agent_config",
                         "monitor_id": joined_room.selected_monitor_id,
                         "follow_cursor": joined_room.follow_cursor,
+                        "audio_enabled": room_audio_needed(joined_room),
+                    },
+                )
+                await broadcast_room_status(joined_room)
+            elif msg_type == "audio_subscribe":
+                if not joined_room or not mobile_id:
+                    await safe_send(websocket, {"type": "error", "message": "Join a room first."})
+                    continue
+                enabled = bool(data.get("enabled"))
+                mobile_obj = joined_room.mobiles.get(mobile_id)
+                if mobile_obj is not None:
+                    mobile_obj.audio_enabled = enabled
+                await safe_send(
+                    joined_room.agent_socket,
+                    {
+                        "type": "agent_config",
+                        "monitor_id": joined_room.selected_monitor_id,
+                        "follow_cursor": joined_room.follow_cursor,
+                        "audio_enabled": room_audio_needed(joined_room),
                     },
                 )
                 await broadcast_room_status(joined_room)
@@ -405,6 +438,7 @@ async def ws_agent(websocket: WebSocket) -> None:
                 monitors = data.get("monitors", [])
                 selected = data.get("selected_monitor_id")
                 follow = data.get("follow_cursor")
+                audio_available = data.get("audio_available")
                 if isinstance(monitors, list):
                     joined_room.available_monitors = [
                         m for m in monitors if isinstance(m, dict)
@@ -413,6 +447,8 @@ async def ws_agent(websocket: WebSocket) -> None:
                     joined_room.selected_monitor_id = selected
                 if isinstance(follow, bool):
                     joined_room.follow_cursor = follow
+                if isinstance(audio_available, bool):
+                    joined_room.audio_available = audio_available
                 await broadcast_room_status(joined_room)
             elif msg_type == "screen_frame" and joined_room is not None:
                 jpeg = data.get("jpeg")
@@ -435,6 +471,21 @@ async def ws_agent(websocket: WebSocket) -> None:
                             "ts": joined_room.latest_frame_ts,
                             "cursor": joined_room.latest_frame_cursor,
                             "monitor_id": joined_room.latest_frame_monitor_id,
+                        },
+                    )
+            elif msg_type == "audio_chunk" and joined_room is not None:
+                pcm16 = data.get("pcm16")
+                sample_rate = data.get("sample_rate")
+                channels = data.get("channels")
+                if isinstance(pcm16, str) and pcm16:
+                    await broadcast_audio_chunk(
+                        joined_room,
+                        {
+                            "type": "audio_chunk",
+                            "pcm16": pcm16,
+                            "sample_rate": int(sample_rate) if isinstance(sample_rate, (int, float)) else 24000,
+                            "channels": int(channels) if isinstance(channels, (int, float)) else 1,
+                            "ts": float(data.get("ts", time.time())),
                         },
                     )
     except WebSocketDisconnect:

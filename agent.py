@@ -3,6 +3,8 @@ import asyncio
 import base64
 import contextlib
 import json
+import queue
+import threading
 import time
 from dataclasses import dataclass
 from io import BytesIO
@@ -15,6 +17,14 @@ from pynput.keyboard import Controller as KeyboardController
 from pynput.keyboard import Key, KeyCode
 from pynput.mouse import Button
 from pynput.mouse import Controller as MouseController
+
+try:
+    import numpy as np
+    import soundcard as sc
+
+    AUDIO_IMPORT_OK = True
+except Exception:
+    AUDIO_IMPORT_OK = False
 
 
 keyboard = KeyboardController()
@@ -135,6 +145,8 @@ def to_ws_url(base_url: str) -> str:
 class StreamConfig:
     selected_monitor_id: int | None = None
     follow_cursor: bool = True
+    audio_enabled: bool = False
+    fps: int = 15
 
 
 def list_monitors() -> list[dict]:
@@ -228,9 +240,32 @@ def capture_frame_with_cursor(config: StreamConfig) -> dict | None:
         return None
 
 
-async def run_agent(server: str, room_code: str, password: str) -> None:
+def audio_capture_worker(
+    out_queue: queue.Queue[bytes], stop_event: threading.Event, sample_rate: int = 24000
+) -> None:
+    if not AUDIO_IMPORT_OK:
+        return
+    try:
+        speaker = sc.default_speaker()
+        if speaker is None:
+            return
+        mic = sc.get_microphone(str(speaker.name), include_loopback=True)
+        with mic.recorder(samplerate=sample_rate, channels=2, blocksize=1024) as rec:
+            while not stop_event.is_set():
+                data = rec.record(numframes=1024)
+                mono = data.mean(axis=1)
+                pcm = np.clip(mono * 32767.0, -32768, 32767).astype(np.int16).tobytes()
+                try:
+                    out_queue.put(pcm, timeout=0.2)
+                except queue.Full:
+                    continue
+    except Exception as ex:
+        print(f"[WARN] Audio worker stopped: {ex}")
+
+
+async def run_agent(server: str, room_code: str, password: str, fps: int) -> None:
     ws_url = to_ws_url(server)
-    config = StreamConfig()
+    config = StreamConfig(fps=max(1, int(fps)))
     print(f"[INFO] Connecting to {ws_url}")
     while True:
         try:
@@ -246,7 +281,8 @@ async def run_agent(server: str, room_code: str, password: str) -> None:
                 )
                 print("[INFO] Agent connected and authenticated.")
                 await safe_send_agent_info(ws, config)
-                stream_task = asyncio.create_task(stream_screen(ws, config, fps=5))
+                stream_task = asyncio.create_task(stream_screen(ws, config, fps=config.fps))
+                audio_task = asyncio.create_task(stream_audio(ws, config))
                 try:
                     async for raw in ws:
                         data = json.loads(raw)
@@ -260,10 +296,13 @@ async def run_agent(server: str, room_code: str, password: str) -> None:
                         if msg_type == "agent_config":
                             monitor_id = data.get("monitor_id")
                             follow = data.get("follow_cursor")
+                            audio_enabled = data.get("audio_enabled")
                             if isinstance(monitor_id, int) and monitor_id > 0:
                                 config.selected_monitor_id = monitor_id
                             if isinstance(follow, bool):
                                 config.follow_cursor = follow
+                            if isinstance(audio_enabled, bool):
+                                config.audio_enabled = audio_enabled
                             await safe_send_agent_info(ws, config)
                             continue
                         if msg_type != "control":
@@ -289,8 +328,11 @@ async def run_agent(server: str, room_code: str, password: str) -> None:
                                 press_combo([str(m) for m in modifiers], str(event.get("key", "")))
                 finally:
                     stream_task.cancel()
+                    audio_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await stream_task
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await audio_task
         except Exception as ex:
             print(f"[WARN] Disconnected: {ex}")
             await asyncio.sleep(2)
@@ -310,6 +352,7 @@ async def safe_send_agent_info(ws, config: StreamConfig) -> None:
                 "monitors": monitors,
                 "selected_monitor_id": selected,
                 "follow_cursor": config.follow_cursor,
+                "audio_available": AUDIO_IMPORT_OK,
             }
         )
     )
@@ -334,6 +377,7 @@ async def stream_screen(ws, config: StreamConfig, fps: int = 5) -> None:
                             "monitors": frame["monitors"],
                             "selected_monitor_id": frame["monitor_id"],
                             "follow_cursor": frame["follow_cursor"],
+                            "audio_available": AUDIO_IMPORT_OK,
                         }
                     )
                 )
@@ -351,14 +395,53 @@ async def stream_screen(ws, config: StreamConfig, fps: int = 5) -> None:
         await asyncio.sleep(interval)
 
 
+async def stream_audio(ws, config: StreamConfig) -> None:
+    if not AUDIO_IMPORT_OK:
+        return
+
+    pcm_queue: queue.Queue[bytes] = queue.Queue(maxsize=40)
+    stop_event = threading.Event()
+    worker = threading.Thread(
+        target=audio_capture_worker,
+        args=(pcm_queue, stop_event, 24000),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        while True:
+            if not config.audio_enabled:
+                await asyncio.sleep(0.2)
+                continue
+
+            try:
+                pcm = await asyncio.to_thread(pcm_queue.get, True, 1.0)
+            except queue.Empty:
+                continue
+
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "audio_chunk",
+                        "pcm16": base64.b64encode(pcm).decode("ascii"),
+                        "sample_rate": 24000,
+                        "channels": 1,
+                        "ts": time.time(),
+                    }
+                )
+            )
+    finally:
+        stop_event.set()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Remote desktop input agent.")
     parser.add_argument("--server", required=True, help="Render URL, e.g. https://your-app.onrender.com")
     parser.add_argument("--room", required=True, help="Room code")
     parser.add_argument("--password", required=True, help="Room password")
+    parser.add_argument("--fps", type=int, default=15, help="Target preview FPS (default 15)")
     args = parser.parse_args()
 
-    asyncio.run(run_agent(args.server, args.room, args.password))
+    asyncio.run(run_agent(args.server, args.room, args.password, args.fps))
 
 
 if __name__ == "__main__":

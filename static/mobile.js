@@ -17,12 +17,17 @@ const previewEmpty = document.getElementById("preview-empty");
 const cursorDot = document.getElementById("cursor-dot");
 const monitorSelect = document.getElementById("monitor-select");
 const followCursorToggle = document.getElementById("follow-cursor-toggle");
+const audioToggle = document.getElementById("audio-toggle");
 
 let ws = null;
 let joined = false;
 let lastJoinPayload = null;
 let monitors = [];
 let suppressMonitorEvents = false;
+let audioAvailable = false;
+let audioEnabled = false;
+let audioCtx = null;
+let audioNextTime = 0;
 const activeModifiers = new Set();
 const modifierKeys = new Set(["ctrl", "shift", "alt", "cmd"]);
 
@@ -105,10 +110,13 @@ function onMessage(raw) {
     infoAgent.textContent = data.agent_connected ? "online" : "offline";
     setStatus(`Joined room ${data.room_code}.`);
     updateOrientationState();
+    refreshAudioButton();
     return;
   }
   if (data.type === "room_status") {
     infoAgent.textContent = data.agent_connected ? "online" : "offline";
+    audioAvailable = Boolean(data.audio_available);
+    refreshAudioButton();
     if (Array.isArray(data.monitors)) {
       monitors = data.monitors;
       renderMonitorOptions(data.selected_monitor_id, data.follow_cursor);
@@ -123,14 +131,20 @@ function onMessage(raw) {
     }
     return;
   }
+  if (data.type === "audio_chunk") {
+    handleAudioChunk(data);
+    return;
+  }
   if (data.type === "room_closed") {
     setStatus(data.message || "Room closed.");
     joined = false;
+    audioEnabled = false;
     activeModifiers.clear();
     controlSection.classList.add("hidden");
     joinSection.classList.remove("hidden");
     previewEmpty.classList.remove("hidden");
     cursorDot.classList.add("hidden");
+    refreshAudioButton();
     return;
   }
   if (data.type === "warning") {
@@ -145,6 +159,11 @@ function onMessage(raw) {
 function sendControl(eventPayload) {
   if (!ws || ws.readyState !== WebSocket.OPEN || !joined) return;
   ws.send(JSON.stringify({ type: "control", event: eventPayload }));
+}
+
+function sendAudioSubscribe(enabled) {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !joined) return;
+  ws.send(JSON.stringify({ type: "audio_subscribe", enabled: Boolean(enabled) }));
 }
 
 function sendMonitorConfig() {
@@ -198,6 +217,63 @@ function paintCursor(cursor) {
   cursorDot.classList.remove("hidden");
 }
 
+function refreshAudioButton() {
+  if (!audioToggle) return;
+  audioToggle.disabled = !audioAvailable || !joined;
+  if (!audioAvailable) {
+    audioToggle.textContent = "Audio Unavailable";
+  } else if (audioEnabled) {
+    audioToggle.textContent = "Disable Audio";
+  } else {
+    audioToggle.textContent = "Enable Audio";
+  }
+}
+
+function ensureAudioContext() {
+  if (audioCtx) return audioCtx;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+  audioNextTime = audioCtx.currentTime;
+  return audioCtx;
+}
+
+function decodePcm16Base64(base64Text) {
+  const bin = atob(base64Text);
+  const byteLen = bin.length;
+  const out = new Int16Array(byteLen / 2);
+  for (let i = 0; i < out.length; i++) {
+    const lo = bin.charCodeAt(i * 2);
+    const hi = bin.charCodeAt(i * 2 + 1);
+    const val = (hi << 8) | lo;
+    out[i] = val >= 32768 ? val - 65536 : val;
+  }
+  return out;
+}
+
+function handleAudioChunk(data) {
+  if (!audioEnabled || !audioCtx) return;
+  const pcm64 = data.pcm16;
+  const sampleRate = Number(data.sample_rate || 24000);
+  if (typeof pcm64 !== "string" || !pcm64.length) return;
+  const pcm = decodePcm16Base64(pcm64);
+  if (!pcm.length) return;
+
+  const buffer = audioCtx.createBuffer(1, pcm.length, sampleRate);
+  const channel = buffer.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) {
+    channel[i] = pcm[i] / 32768;
+  }
+
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(audioCtx.destination);
+  const now = audioCtx.currentTime;
+  if (audioNextTime < now - 0.3) {
+    audioNextTime = now + 0.02;
+  }
+  source.start(audioNextTime);
+  audioNextTime += buffer.duration;
+}
+
 joinBtn.addEventListener("click", () => {
   const roomCode = roomCodeInput.value.trim().toUpperCase();
   const password = roomPasswordInput.value.trim();
@@ -218,6 +294,27 @@ joinBtn.addEventListener("click", () => {
   };
   lastJoinPayload = payload;
   ws.send(JSON.stringify(payload));
+});
+
+audioToggle.addEventListener("click", async () => {
+  if (!joined || !audioAvailable) return;
+  if (!audioEnabled) {
+    try {
+      const ctx = ensureAudioContext();
+      await ctx.resume();
+      audioEnabled = true;
+      sendAudioSubscribe(true);
+      setStatus("Audio enabled.");
+    } catch (_err) {
+      setStatus("Could not start audio.", true);
+      audioEnabled = false;
+    }
+  } else {
+    audioEnabled = false;
+    sendAudioSubscribe(false);
+    setStatus("Audio disabled.");
+  }
+  refreshAudioButton();
 });
 
 function renderKeyboard() {
@@ -355,3 +452,4 @@ window.addEventListener("orientationchange", updateOrientationState);
 window.addEventListener("resize", updateOrientationState);
 
 connect();
+refreshAudioButton();
