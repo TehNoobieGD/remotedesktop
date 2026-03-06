@@ -5,6 +5,10 @@ This project gives you:
 - A PC host page (`/pc`) to create a room and see connected phones.
 - A mobile page (`/mobile`) with trackpad + full virtual keyboard (F keys, arrows, numpad, etc.), QWERTY/AZERTY switch, and live preview.
 - A local `agent.py` you run on your PC to apply mouse/keyboard actions and stream screen preview at about 5 FPS.
+- Multi-monitor support:
+  - Auto-follow cursor across screens
+  - Manual screen selection from mobile
+  - Cursor overlay rendered on mobile preview
 
 ## Render Service Type
 
@@ -37,6 +41,20 @@ Open:
    ```
 3. On phone browser, open `/mobile`, enter room code + password, then control via trackpad and keyboard.
 4. Rotate phone to landscape for best control layout (preview on top, keyboard left, trackpad right).
+
+## Electron Launcher (optional)
+
+Created at:
+- `C:\Users\clutc\OneDrive\Documents\Electron REMOTEDESKTOP`
+
+Run it:
+```bash
+cd "C:\Users\clutc\OneDrive\Documents\Electron REMOTEDESKTOP"
+npm install
+npm start
+```
+
+It opens your hosted website and lets you start/stop `agent.py` from UI by entering server, room, and password.
 
 ## Notes
 

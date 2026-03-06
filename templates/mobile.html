@@ -39,9 +39,18 @@
               <span><strong>Room:</strong> <span id="info-room">-</span></span>
               <span><strong>Agent:</strong> <span id="info-agent">offline</span></span>
             </div>
+            <div class="monitor-controls">
+              <label for="monitor-select">Screen</label>
+              <select id="monitor-select"></select>
+              <label class="follow-wrap">
+                <input id="follow-cursor-toggle" type="checkbox" checked />
+                Auto follow cursor
+              </label>
+            </div>
           </div>
           <div class="preview-shell">
             <img id="screen-preview" alt="PC screen preview" />
+            <div id="cursor-dot" class="cursor-dot hidden"></div>
             <div id="preview-empty" class="preview-empty">No preview yet. Start agent on PC.</div>
           </div>
         </section>

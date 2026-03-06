@@ -14,10 +14,15 @@ const layoutSelect = document.getElementById("layout-select");
 const rotateWarning = document.getElementById("rotate-warning");
 const screenPreview = document.getElementById("screen-preview");
 const previewEmpty = document.getElementById("preview-empty");
+const cursorDot = document.getElementById("cursor-dot");
+const monitorSelect = document.getElementById("monitor-select");
+const followCursorToggle = document.getElementById("follow-cursor-toggle");
 
 let ws = null;
 let joined = false;
 let lastJoinPayload = null;
+let monitors = [];
+let suppressMonitorEvents = false;
 const activeModifiers = new Set();
 const modifierKeys = new Set(["ctrl", "shift", "alt", "cmd"]);
 
@@ -104,12 +109,17 @@ function onMessage(raw) {
   }
   if (data.type === "room_status") {
     infoAgent.textContent = data.agent_connected ? "online" : "offline";
+    if (Array.isArray(data.monitors)) {
+      monitors = data.monitors;
+      renderMonitorOptions(data.selected_monitor_id, data.follow_cursor);
+    }
     return;
   }
   if (data.type === "screen_frame") {
     if (typeof data.jpeg === "string" && data.jpeg.length) {
       screenPreview.src = `data:image/jpeg;base64,${data.jpeg}`;
       previewEmpty.classList.add("hidden");
+      paintCursor(data.cursor);
     }
     return;
   }
@@ -120,6 +130,7 @@ function onMessage(raw) {
     controlSection.classList.add("hidden");
     joinSection.classList.remove("hidden");
     previewEmpty.classList.remove("hidden");
+    cursorDot.classList.add("hidden");
     return;
   }
   if (data.type === "warning") {
@@ -134,6 +145,57 @@ function onMessage(raw) {
 function sendControl(eventPayload) {
   if (!ws || ws.readyState !== WebSocket.OPEN || !joined) return;
   ws.send(JSON.stringify({ type: "control", event: eventPayload }));
+}
+
+function sendMonitorConfig() {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !joined) return;
+  const monitorId = Number(monitorSelect.value || "0");
+  const payload = {
+    type: "monitor_config",
+    follow_cursor: Boolean(followCursorToggle.checked),
+    monitor_id: Number.isFinite(monitorId) && monitorId > 0 ? monitorId : null
+  };
+  ws.send(JSON.stringify(payload));
+}
+
+function renderMonitorOptions(selectedMonitorId, followCursor) {
+  const selected = Number(selectedMonitorId || 0);
+  suppressMonitorEvents = true;
+  monitorSelect.innerHTML = "";
+  for (const mon of monitors) {
+    if (!mon || typeof mon.id !== "number") continue;
+    const opt = document.createElement("option");
+    opt.value = String(mon.id);
+    const label = mon.label || `Display ${mon.id}`;
+    opt.textContent = `${label} (${mon.width}x${mon.height})`;
+    monitorSelect.appendChild(opt);
+  }
+  if (selected > 0) {
+    monitorSelect.value = String(selected);
+  }
+  if (typeof followCursor === "boolean") {
+    followCursorToggle.checked = followCursor;
+  }
+  monitorSelect.disabled = Boolean(followCursorToggle.checked);
+  suppressMonitorEvents = false;
+}
+
+function paintCursor(cursor) {
+  if (!cursor || cursor.visible === false) {
+    cursorDot.classList.add("hidden");
+    return;
+  }
+  const xNorm = Number(cursor.x_norm);
+  const yNorm = Number(cursor.y_norm);
+  if (!Number.isFinite(xNorm) || !Number.isFinite(yNorm)) {
+    cursorDot.classList.add("hidden");
+    return;
+  }
+  const x = Math.max(0, Math.min(1, xNorm)) * screenPreview.clientWidth;
+  const y = Math.max(0, Math.min(1, yNorm)) * screenPreview.clientHeight;
+  cursorDot.style.left = `${x}px`;
+  cursorDot.style.top = `${y}px`;
+  cursorDot.classList.remove("hidden");
 }
 
 joinBtn.addEventListener("click", () => {
@@ -203,6 +265,17 @@ function handleKeyPress(value) {
 
 layoutSelect.addEventListener("change", renderKeyboard);
 renderKeyboard();
+
+monitorSelect.addEventListener("change", () => {
+  if (suppressMonitorEvents) return;
+  sendMonitorConfig();
+});
+
+followCursorToggle.addEventListener("change", () => {
+  if (suppressMonitorEvents) return;
+  monitorSelect.disabled = Boolean(followCursorToggle.checked);
+  sendMonitorConfig();
+});
 
 for (const btn of document.querySelectorAll("[data-mouse]")) {
   btn.addEventListener("click", () => {

@@ -4,6 +4,7 @@ import base64
 import contextlib
 import json
 import time
+from dataclasses import dataclass
 from io import BytesIO
 from urllib.parse import urlparse
 
@@ -130,8 +131,106 @@ def to_ws_url(base_url: str) -> str:
     return f"{scheme}://{host}/ws/agent"
 
 
+@dataclass
+class StreamConfig:
+    selected_monitor_id: int | None = None
+    follow_cursor: bool = True
+
+
+def list_monitors() -> list[dict]:
+    with mss.mss() as sct:
+        monitors = []
+        for idx, mon in enumerate(sct.monitors[1:], start=1):
+            monitors.append(
+                {
+                    "id": idx,
+                    "label": f"Display {idx}",
+                    "left": int(mon["left"]),
+                    "top": int(mon["top"]),
+                    "width": int(mon["width"]),
+                    "height": int(mon["height"]),
+                }
+            )
+        return monitors
+
+
+def monitor_containing(monitors: list[dict], x: int, y: int) -> int | None:
+    for mon in monitors:
+        left = mon["left"]
+        top = mon["top"]
+        right = left + mon["width"]
+        bottom = top + mon["height"]
+        if left <= x < right and top <= y < bottom:
+            return int(mon["id"])
+    return None
+
+
+def pick_monitor_id(monitors: list[dict], config: StreamConfig, cursor_x: int, cursor_y: int) -> int:
+    if not monitors:
+        return 1
+    ids = {int(m["id"]) for m in monitors}
+    if config.follow_cursor:
+        current = monitor_containing(monitors, cursor_x, cursor_y)
+        if current is not None:
+            return current
+    if config.selected_monitor_id in ids:
+        return int(config.selected_monitor_id)
+    return int(monitors[0]["id"])
+
+
+def capture_frame_with_cursor(config: StreamConfig) -> dict | None:
+    try:
+        with mss.mss() as sct:
+            monitor_map = []
+            for idx, mon in enumerate(sct.monitors[1:], start=1):
+                monitor_map.append(
+                    {
+                        "id": idx,
+                        "label": f"Display {idx}",
+                        "left": int(mon["left"]),
+                        "top": int(mon["top"]),
+                        "width": int(mon["width"]),
+                        "height": int(mon["height"]),
+                    }
+                )
+            if not monitor_map:
+                return None
+
+            cursor_x, cursor_y = mouse.position
+            selected_id = pick_monitor_id(monitor_map, config, int(cursor_x), int(cursor_y))
+            mon = monitor_map[selected_id - 1]
+
+            shot = sct.grab(mon)
+            image = Image.frombytes("RGB", shot.size, shot.rgb)
+            image.thumbnail((1280, 720))
+            output = BytesIO()
+            image.save(output, format="JPEG", quality=60, optimize=True)
+            jpeg_b64 = base64.b64encode(output.getvalue()).decode("ascii")
+
+            rel_x = int(cursor_x) - int(mon["left"])
+            rel_y = int(cursor_y) - int(mon["top"])
+            visible = 0 <= rel_x < int(mon["width"]) and 0 <= rel_y < int(mon["height"])
+            cursor_payload = {
+                "visible": bool(visible),
+                "x_norm": max(0.0, min(1.0, rel_x / max(1, int(mon["width"])))),
+                "y_norm": max(0.0, min(1.0, rel_y / max(1, int(mon["height"])))),
+            }
+
+            return {
+                "jpeg": jpeg_b64,
+                "monitor_id": selected_id,
+                "cursor": cursor_payload,
+                "monitors": monitor_map,
+                "follow_cursor": config.follow_cursor,
+            }
+    except Exception as ex:
+        print(f"[WARN] Screen capture failed: {ex}")
+        return None
+
+
 async def run_agent(server: str, room_code: str, password: str) -> None:
     ws_url = to_ws_url(server)
+    config = StreamConfig()
     print(f"[INFO] Connecting to {ws_url}")
     while True:
         try:
@@ -146,7 +245,8 @@ async def run_agent(server: str, room_code: str, password: str) -> None:
                     )
                 )
                 print("[INFO] Agent connected and authenticated.")
-                stream_task = asyncio.create_task(stream_screen(ws, fps=5))
+                await safe_send_agent_info(ws, config)
+                stream_task = asyncio.create_task(stream_screen(ws, config, fps=5))
                 try:
                     async for raw in ws:
                         data = json.loads(raw)
@@ -157,6 +257,15 @@ async def run_agent(server: str, room_code: str, password: str) -> None:
                         if msg_type == "room_closed":
                             print("[INFO] Room closed by host.")
                             break
+                        if msg_type == "agent_config":
+                            monitor_id = data.get("monitor_id")
+                            follow = data.get("follow_cursor")
+                            if isinstance(monitor_id, int) and monitor_id > 0:
+                                config.selected_monitor_id = monitor_id
+                            if isinstance(follow, bool):
+                                config.follow_cursor = follow
+                            await safe_send_agent_info(ws, config)
+                            continue
                         if msg_type != "control":
                             continue
 
@@ -187,32 +296,55 @@ async def run_agent(server: str, room_code: str, password: str) -> None:
             await asyncio.sleep(2)
 
 
-def capture_frame() -> str | None:
-    try:
-        with mss.mss() as sct:
-            monitor = sct.monitors[1]
-            shot = sct.grab(monitor)
-            image = Image.frombytes("RGB", shot.size, shot.rgb)
-            image.thumbnail((960, 540))
-            output = BytesIO()
-            image.save(output, format="JPEG", quality=55, optimize=True)
-            return base64.b64encode(output.getvalue()).decode("ascii")
-    except Exception as ex:
-        print(f"[WARN] Screen capture failed: {ex}")
-        return None
+async def safe_send_agent_info(ws, config: StreamConfig) -> None:
+    monitors = await asyncio.to_thread(list_monitors)
+    selected = config.selected_monitor_id
+    valid_ids = {int(m["id"]) for m in monitors}
+    if selected not in valid_ids and monitors:
+        selected = int(monitors[0]["id"])
+        config.selected_monitor_id = selected
+    await ws.send(
+        json.dumps(
+            {
+                "type": "agent_info",
+                "monitors": monitors,
+                "selected_monitor_id": selected,
+                "follow_cursor": config.follow_cursor,
+            }
+        )
+    )
 
 
-async def stream_screen(ws, fps: int = 5) -> None:
+async def stream_screen(ws, config: StreamConfig, fps: int = 5) -> None:
     interval = 1 / max(1, fps)
+    last_monitor_layout = ""
+    last_sent_info = 0.0
     while True:
-        jpeg = await asyncio.to_thread(capture_frame)
-        if jpeg:
+        frame = await asyncio.to_thread(capture_frame_with_cursor, config)
+        if frame:
+            monitor_layout = json.dumps(frame["monitors"], sort_keys=True)
+            now = time.time()
+            if monitor_layout != last_monitor_layout or now - last_sent_info > 5:
+                last_monitor_layout = monitor_layout
+                last_sent_info = now
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "agent_info",
+                            "monitors": frame["monitors"],
+                            "selected_monitor_id": frame["monitor_id"],
+                            "follow_cursor": frame["follow_cursor"],
+                        }
+                    )
+                )
             await ws.send(
                 json.dumps(
                     {
                         "type": "screen_frame",
-                        "jpeg": jpeg,
+                        "jpeg": frame["jpeg"],
                         "ts": time.time(),
+                        "cursor": frame["cursor"],
+                        "monitor_id": frame["monitor_id"],
                     }
                 )
             )

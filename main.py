@@ -54,6 +54,11 @@ class Room:
     mobiles: dict[str, MobileClient] = field(default_factory=dict)
     latest_frame_jpeg: str | None = None
     latest_frame_ts: float | None = None
+    latest_frame_cursor: dict[str, Any] | None = None
+    latest_frame_monitor_id: int | None = None
+    available_monitors: list[dict[str, Any]] = field(default_factory=list)
+    selected_monitor_id: int | None = None
+    follow_cursor: bool = True
 
     def mobile_payload(self) -> list[dict[str, Any]]:
         return [
@@ -86,6 +91,9 @@ def room_status(room: Room) -> dict[str, Any]:
         "mobile_count": len(room.mobiles),
         "mobiles": room.mobile_payload(),
         "created_at": room.created_at,
+        "monitors": room.available_monitors,
+        "selected_monitor_id": room.selected_monitor_id,
+        "follow_cursor": room.follow_cursor,
     }
 
 
@@ -282,6 +290,8 @@ async def ws_mobile(websocket: WebSocket) -> None:
                             "type": "screen_frame",
                             "jpeg": room.latest_frame_jpeg,
                             "ts": room.latest_frame_ts,
+                            "cursor": room.latest_frame_cursor,
+                            "monitor_id": room.latest_frame_monitor_id,
                         },
                     )
                 await broadcast_room_status(room)
@@ -310,6 +320,30 @@ async def ws_mobile(websocket: WebSocket) -> None:
                             "message": "PC agent is offline. Start agent.py on host machine.",
                         },
                     )
+            elif msg_type == "monitor_config":
+                if not joined_room:
+                    await safe_send(websocket, {"type": "error", "message": "Join a room first."})
+                    continue
+
+                monitor_id_raw = data.get("monitor_id")
+                follow_cursor = data.get("follow_cursor")
+                monitor_id: int | None = None
+                if isinstance(monitor_id_raw, (int, float)):
+                    monitor_id = int(monitor_id_raw)
+                if isinstance(follow_cursor, bool):
+                    joined_room.follow_cursor = follow_cursor
+                if monitor_id is not None and monitor_id > 0:
+                    joined_room.selected_monitor_id = monitor_id
+
+                await safe_send(
+                    joined_room.agent_socket,
+                    {
+                        "type": "agent_config",
+                        "monitor_id": joined_room.selected_monitor_id,
+                        "follow_cursor": joined_room.follow_cursor,
+                    },
+                )
+                await broadcast_room_status(joined_room)
             elif msg_type == "ping":
                 await safe_send(websocket, {"type": "pong"})
             else:
@@ -367,17 +401,40 @@ async def ws_agent(websocket: WebSocket) -> None:
             msg_type = data.get("type")
             if msg_type == "ping":
                 await safe_send(websocket, {"type": "pong"})
+            elif msg_type == "agent_info" and joined_room is not None:
+                monitors = data.get("monitors", [])
+                selected = data.get("selected_monitor_id")
+                follow = data.get("follow_cursor")
+                if isinstance(monitors, list):
+                    joined_room.available_monitors = [
+                        m for m in monitors if isinstance(m, dict)
+                    ]
+                if isinstance(selected, int):
+                    joined_room.selected_monitor_id = selected
+                if isinstance(follow, bool):
+                    joined_room.follow_cursor = follow
+                await broadcast_room_status(joined_room)
             elif msg_type == "screen_frame" and joined_room is not None:
                 jpeg = data.get("jpeg")
                 if isinstance(jpeg, str) and jpeg:
                     joined_room.latest_frame_jpeg = jpeg
                     joined_room.latest_frame_ts = float(data.get("ts", time.time()))
+                    cursor = data.get("cursor")
+                    monitor_id = data.get("monitor_id")
+                    if isinstance(cursor, dict):
+                        joined_room.latest_frame_cursor = cursor
+                    else:
+                        joined_room.latest_frame_cursor = None
+                    if isinstance(monitor_id, int):
+                        joined_room.latest_frame_monitor_id = monitor_id
                     await broadcast_screen_frame(
                         joined_room,
                         {
                             "type": "screen_frame",
                             "jpeg": jpeg,
                             "ts": joined_room.latest_frame_ts,
+                            "cursor": joined_room.latest_frame_cursor,
+                            "monitor_id": joined_room.latest_frame_monitor_id,
                         },
                     )
     except WebSocketDisconnect:
