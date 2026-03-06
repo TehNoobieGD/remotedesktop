@@ -34,8 +34,13 @@ let audioCtx = null;
 let audioNextTime = 0;
 let frameMonitorWidth = 0;
 let frameMonitorHeight = 0;
-const activeModifiers = new Set();
-const modifierKeys = new Set(["ctrl", "shift", "alt", "cmd"]);
+let pendingDx = 0;
+let pendingDy = 0;
+let pointerActive = false;
+let lastX = 0;
+let lastY = 0;
+const heldKeys = new Set();
+const sensitivity = 1.35;
 
 const layouts = {
   qwerty: [
@@ -48,7 +53,7 @@ const layouts = {
   ],
   azerty: [
     [{ label: "Esc", value: "escape" }, { label: "F1", value: "f1" }, { label: "F2", value: "f2" }, { label: "F3", value: "f3" }, { label: "F4", value: "f4" }, { label: "F5", value: "f5" }, { label: "F6", value: "f6" }, { label: "F7", value: "f7" }, { label: "F8", value: "f8" }, { label: "F9", value: "f9" }, { label: "F10", value: "f10" }, { label: "F11", value: "f11" }, { label: "F12", value: "f12" }, { label: "PrtSc", value: "print_screen", units: 2 }],
-    [{ label: "2", value: "2" }, { label: "&", value: "&" }, { label: '"', value: '"' }, { label: "'", value: "'" }, { label: "(", value: "(" }, { label: "-", value: "-" }, { label: "_", value: "_" }, { label: ")", value: ")" }, { label: "=", value: "=" }, { label: "Backspace", value: "backspace", units: 2.4 }, { label: "N7", value: "numpad_7" }, { label: "N8", value: "numpad_8" }, { label: "N9", value: "numpad_9" }, { label: "N/", value: "numpad_divide" }],
+    [{ label: "2", value: "2" }, { label: "&", value: "&" }, { label: "\"", value: "\"" }, { label: "'", value: "'" }, { label: "(", value: "(" }, { label: "-", value: "-" }, { label: "_", value: "_" }, { label: ")", value: ")" }, { label: "=", value: "=" }, { label: "Backspace", value: "backspace", units: 2.4 }, { label: "N7", value: "numpad_7" }, { label: "N8", value: "numpad_8" }, { label: "N9", value: "numpad_9" }, { label: "N/", value: "numpad_divide" }],
     [{ label: "Tab", value: "tab", units: 1.6 }, { label: "A", value: "a" }, { label: "Z", value: "z" }, { label: "E", value: "e" }, { label: "R", value: "r" }, { label: "T", value: "t" }, { label: "Y", value: "y" }, { label: "U", value: "u" }, { label: "I", value: "i" }, { label: "O", value: "o" }, { label: "P", value: "p" }, { label: "^", value: "^" }, { label: "$", value: "$" }, { label: "\\", value: "\\" }, { label: "N4", value: "numpad_4" }, { label: "N5", value: "numpad_5" }, { label: "N6", value: "numpad_6" }, { label: "N*", value: "numpad_multiply" }],
     [{ label: "Caps", value: "caps_lock", units: 1.9 }, { label: "Q", value: "q" }, { label: "S", value: "s" }, { label: "D", value: "d" }, { label: "F", value: "f" }, { label: "G", value: "g" }, { label: "H", value: "h" }, { label: "J", value: "j" }, { label: "K", value: "k" }, { label: "L", value: "l" }, { label: "M", value: "m" }, { label: "U", value: "u" }, { label: "Enter", value: "enter", units: 2 }, { label: "N1", value: "numpad_1" }, { label: "N2", value: "numpad_2" }, { label: "N3", value: "numpad_3" }, { label: "N-", value: "numpad_subtract" }],
     [{ label: "Shift", value: "shift", units: 2.3 }, { label: "W", value: "w" }, { label: "X", value: "x" }, { label: "C", value: "c" }, { label: "V", value: "v" }, { label: "B", value: "b" }, { label: "N", value: "n" }, { label: ",", value: "," }, { label: ";", value: ";" }, { label: ":", value: ":" }, { label: "!", value: "!" }, { label: "Shift", value: "shift", units: 2.1 }, { label: "Up", value: "up" }, { label: "N0", value: "numpad_0", units: 2 }, { label: "N.", value: "numpad_decimal" }, { label: "N+", value: "numpad_add" }],
@@ -68,14 +73,10 @@ function setStatus(text, isError = false) {
 
 function detectDeviceName() {
   const ua = navigator.userAgent || "";
-  const platform = navigator.platform || "";
-  let base = "Phone";
-  if (/iPhone/i.test(ua)) base = "iPhone";
-  else if (/iPad/i.test(ua)) base = "iPad";
-  else if (/Android/i.test(ua)) base = "Android";
-  else if (/Windows/i.test(platform)) base = "Windows Device";
-  else if (/Mac/i.test(platform)) base = "Mac Device";
-  return base;
+  if (/iPhone/i.test(ua)) return "iPhone";
+  if (/iPad/i.test(ua)) return "iPad";
+  if (/Android/i.test(ua)) return "Android";
+  return "Phone";
 }
 
 function updateOrientationState() {
@@ -88,9 +89,7 @@ function connect() {
   ws = new WebSocket(wsUrl("/ws/mobile"));
   ws.onopen = () => {
     setStatus("Connected to server.");
-    if (lastJoinPayload) {
-      ws.send(JSON.stringify(lastJoinPayload));
-    }
+    if (lastJoinPayload) ws.send(JSON.stringify(lastJoinPayload));
   };
   ws.onclose = () => {
     setStatus("Disconnected. Reconnecting...");
@@ -102,11 +101,8 @@ function connect() {
 
 function onMessage(raw) {
   let data = {};
-  try {
-    data = JSON.parse(raw);
-  } catch (_err) {
-    return;
-  }
+  try { data = JSON.parse(raw); } catch (_err) { return; }
+
   if (data.type === "joined_room") {
     joined = true;
     joinSection.classList.add("hidden");
@@ -119,6 +115,7 @@ function onMessage(raw) {
     refreshAudioButton();
     return;
   }
+
   if (data.type === "room_status") {
     infoAgent.textContent = data.agent_connected ? "online" : "offline";
     audioAvailable = Boolean(data.audio_available);
@@ -134,6 +131,7 @@ function onMessage(raw) {
     }
     return;
   }
+
   if (data.type === "screen_frame") {
     if (typeof data.jpeg === "string" && data.jpeg.length) {
       screenPreview.src = `data:image/jpeg;base64,${data.jpeg}`;
@@ -144,16 +142,21 @@ function onMessage(raw) {
     }
     return;
   }
+
   if (data.type === "audio_chunk") {
     handleAudioChunk(data);
     return;
   }
+
   if (data.type === "room_closed") {
     setStatus(data.message || "Room closed.");
     joined = false;
     audioEnabled = false;
     audioAllowedByHost = false;
-    activeModifiers.clear();
+    for (const key of [...heldKeys]) {
+      sendControl({ kind: "key_up", key });
+      heldKeys.delete(key);
+    }
     controlSection.classList.add("hidden");
     joinSection.classList.remove("hidden");
     previewEmpty.classList.remove("hidden");
@@ -161,6 +164,7 @@ function onMessage(raw) {
     refreshAudioButton();
     return;
   }
+
   if (data.type === "warning") {
     setStatus(data.message || "Warning", true);
     return;
@@ -183,12 +187,13 @@ function sendAudioSubscribe(enabled) {
 function sendMonitorConfig() {
   if (!ws || ws.readyState !== WebSocket.OPEN || !joined) return;
   const monitorId = Number(monitorSelect.value || "0");
-  const payload = {
-    type: "monitor_config",
-    follow_cursor: Boolean(followCursorToggle.checked),
-    monitor_id: Number.isFinite(monitorId) && monitorId > 0 ? monitorId : null
-  };
-  ws.send(JSON.stringify(payload));
+  ws.send(
+    JSON.stringify({
+      type: "monitor_config",
+      follow_cursor: Boolean(followCursorToggle.checked),
+      monitor_id: Number.isFinite(monitorId) && monitorId > 0 ? monitorId : null,
+    })
+  );
 }
 
 function renderMonitorOptions(selectedMonitorId, followCursor) {
@@ -199,16 +204,11 @@ function renderMonitorOptions(selectedMonitorId, followCursor) {
     if (!mon || typeof mon.id !== "number") continue;
     const opt = document.createElement("option");
     opt.value = String(mon.id);
-    const label = mon.label || `Display ${mon.id}`;
-    opt.textContent = `${label} (${mon.width}x${mon.height})`;
+    opt.textContent = `${mon.label || `Display ${mon.id}`} (${mon.width}x${mon.height})`;
     monitorSelect.appendChild(opt);
   }
-  if (selected > 0) {
-    monitorSelect.value = String(selected);
-  }
-  if (typeof followCursor === "boolean") {
-    followCursorToggle.checked = followCursor;
-  }
+  if (selected > 0) monitorSelect.value = String(selected);
+  if (typeof followCursor === "boolean") followCursorToggle.checked = followCursor;
   monitorSelect.disabled = Boolean(followCursorToggle.checked);
   suppressMonitorEvents = false;
 }
@@ -228,13 +228,11 @@ function paintCursor(cursor) {
   const containerH = screenPreview.clientHeight;
   const sourceW = frameMonitorWidth > 0 ? frameMonitorWidth : containerW;
   const sourceH = frameMonitorHeight > 0 ? frameMonitorHeight : containerH;
-
   const scale = Math.min(containerW / sourceW, containerH / sourceH);
   const drawW = sourceW * scale;
   const drawH = sourceH * scale;
   const offsetX = (containerW - drawW) / 2;
   const offsetY = (containerH - drawH) / 2;
-
   const x = offsetX + Math.max(0, Math.min(1, xNorm)) * drawW;
   const y = offsetY + Math.max(0, Math.min(1, yNorm)) * drawH;
   cursorDot.style.left = `${x}px`;
@@ -247,8 +245,7 @@ async function refreshRooms() {
   try {
     const res = await fetch("/api/rooms", { cache: "no-store" });
     const data = await res.json();
-    const rooms = Array.isArray(data.rooms) ? data.rooms : [];
-    renderRoomsList(rooms);
+    renderRoomsList(Array.isArray(data.rooms) ? data.rooms : []);
   } catch (_err) {
     roomsList.innerHTML = "<li>Could not load rooms.</li>";
   }
@@ -283,17 +280,11 @@ function renderRoomsList(rooms) {
 }
 
 function refreshAudioButton() {
-  if (!audioToggle) return;
-  audioToggle.disabled = !audioAvailable || !joined || !audioAllowedByHost;
-  if (!audioAvailable) {
-    audioToggle.textContent = "Audio Unavailable";
-  } else if (!audioAllowedByHost) {
-    audioToggle.textContent = "Host Must Enable Audio";
-  } else if (audioEnabled) {
-    audioToggle.textContent = "Disable Audio";
-  } else {
-    audioToggle.textContent = "Enable Audio";
-  }
+  audioToggle.disabled = !joined || !audioAvailable || !audioAllowedByHost;
+  if (!audioAvailable) audioToggle.textContent = "Audio Unavailable";
+  else if (!audioAllowedByHost) audioToggle.textContent = "Host Must Enable Audio";
+  else if (audioEnabled) audioToggle.textContent = "Disable Audio";
+  else audioToggle.textContent = "Enable Audio";
 }
 
 function ensureAudioContext() {
@@ -305,8 +296,7 @@ function ensureAudioContext() {
 
 function decodePcm16Base64(base64Text) {
   const bin = atob(base64Text);
-  const byteLen = bin.length;
-  const out = new Int16Array(byteLen / 2);
+  const out = new Int16Array(bin.length / 2);
   for (let i = 0; i < out.length; i++) {
     const lo = bin.charCodeAt(i * 2);
     const hi = bin.charCodeAt(i * 2 + 1);
@@ -318,27 +308,98 @@ function decodePcm16Base64(base64Text) {
 
 function handleAudioChunk(data) {
   if (!audioEnabled || !audioCtx) return;
-  const pcm64 = data.pcm16;
-  const sampleRate = Number(data.sample_rate || 24000);
-  if (typeof pcm64 !== "string" || !pcm64.length) return;
-  const pcm = decodePcm16Base64(pcm64);
+  if (typeof data.pcm16 !== "string" || !data.pcm16.length) return;
+  const pcm = decodePcm16Base64(data.pcm16);
   if (!pcm.length) return;
-
+  const sampleRate = Number(data.sample_rate || 24000);
   const buffer = audioCtx.createBuffer(1, pcm.length, sampleRate);
-  const channel = buffer.getChannelData(0);
-  for (let i = 0; i < pcm.length; i++) {
-    channel[i] = pcm[i] / 32768;
-  }
-
+  const ch = buffer.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
   const source = audioCtx.createBufferSource();
   source.buffer = buffer;
   source.connect(audioCtx.destination);
   const now = audioCtx.currentTime;
-  if (audioNextTime < now - 0.3) {
-    audioNextTime = now + 0.02;
-  }
+  if (audioNextTime < now - 0.3) audioNextTime = now + 0.02;
   source.start(audioNextTime);
   audioNextTime += buffer.duration;
+}
+
+function renderKeyboard() {
+  const layout = layouts[layoutSelect.value] || layouts.qwerty;
+  keyboard.innerHTML = "";
+  for (const row of layout) {
+    const rowEl = document.createElement("div");
+    rowEl.className = "kb-row";
+    for (const key of row) {
+      const btn = document.createElement("button");
+      btn.className = "kb-key";
+      if (heldKeys.has(key.value)) btn.classList.add("mod-active");
+      btn.textContent = key.label;
+      btn.style.flex = `${key.units || 1} ${key.units || 1} 0`;
+      btn.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        if (heldKeys.has(key.value)) return;
+        heldKeys.add(key.value);
+        sendControl({ kind: "key_down", key: key.value });
+        renderKeyboard();
+      });
+      const release = () => {
+        if (!heldKeys.has(key.value)) return;
+        heldKeys.delete(key.value);
+        sendControl({ kind: "key_up", key: key.value });
+        renderKeyboard();
+      };
+      btn.addEventListener("pointerup", release);
+      btn.addEventListener("pointercancel", release);
+      btn.addEventListener("pointerleave", release);
+      rowEl.appendChild(btn);
+    }
+    keyboard.appendChild(rowEl);
+  }
+}
+
+function bindHoldButton(btn) {
+  const button = btn.dataset.mouse;
+  if (!button) return;
+  btn.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    sendControl({ kind: "mouse_button_down", button });
+  });
+  const release = () => sendControl({ kind: "mouse_button_up", button });
+  btn.addEventListener("pointerup", release);
+  btn.addEventListener("pointercancel", release);
+  btn.addEventListener("pointerleave", release);
+}
+
+function startMove(x, y) {
+  pointerActive = true;
+  lastX = x;
+  lastY = y;
+}
+
+function moveTo(x, y) {
+  if (!pointerActive) return;
+  pendingDx += (x - lastX) * sensitivity;
+  pendingDy += (y - lastY) * sensitivity;
+  lastX = x;
+  lastY = y;
+}
+
+function flushMouseMove() {
+  if (!joined) {
+    pendingDx = 0;
+    pendingDy = 0;
+    return;
+  }
+  if (Math.abs(pendingDx) < 0.15 && Math.abs(pendingDy) < 0.15) return;
+  sendControl({ kind: "mouse_move", dx: pendingDx, dy: pendingDy });
+  pendingDx = 0;
+  pendingDy = 0;
+}
+
+function stopMove() {
+  pointerActive = false;
+  flushMouseMove();
 }
 
 joinBtn.addEventListener("click", () => {
@@ -353,12 +414,7 @@ joinBtn.addEventListener("click", () => {
     setStatus("Connection not ready.", true);
     return;
   }
-  const payload = {
-    type: "join_room",
-    room_code: roomCode,
-    password,
-    device_name: deviceName
-  };
+  const payload = { type: "join_room", room_code: roomCode, password, device_name: deviceName };
   lastJoinPayload = payload;
   ws.send(JSON.stringify(payload));
 });
@@ -386,69 +442,17 @@ audioToggle.addEventListener("click", async () => {
   refreshAudioButton();
 });
 
-function renderKeyboard() {
-  const layout = layouts[layoutSelect.value] || layouts.qwerty;
-  keyboard.innerHTML = "";
-  for (const row of layout) {
-    const rowEl = document.createElement("div");
-    rowEl.className = "kb-row";
-    for (const key of row) {
-      const btn = document.createElement("button");
-      btn.className = "kb-key";
-      btn.textContent = key.label;
-      btn.dataset.value = key.value;
-      btn.style.flex = `${key.units || 1} ${key.units || 1} 0`;
-      if (modifierKeys.has(key.value) && activeModifiers.has(key.value)) {
-        btn.classList.add("mod-active");
-      }
-      btn.addEventListener("click", () => handleKeyPress(key.value));
-      rowEl.appendChild(btn);
-    }
-    keyboard.appendChild(rowEl);
-  }
-}
-
-function handleKeyPress(value) {
-  if (modifierKeys.has(value)) {
-    if (activeModifiers.has(value)) {
-      activeModifiers.delete(value);
-      setStatus(`Modifier released: ${value}`);
-    } else {
-      activeModifiers.add(value);
-      setStatus(`Modifier active: ${[...activeModifiers].join(" + ")}`);
-    }
-    renderKeyboard();
-    return;
-  }
-  if (activeModifiers.size) {
-    sendControl({ kind: "key_combo", modifiers: [...activeModifiers], key: value });
-    activeModifiers.clear();
-    renderKeyboard();
-  } else {
-    sendControl({ kind: "key_tap", key: value });
-  }
-}
-
 layoutSelect.addEventListener("change", renderKeyboard);
-renderKeyboard();
-
 monitorSelect.addEventListener("change", () => {
-  if (suppressMonitorEvents) return;
-  sendMonitorConfig();
+  if (!suppressMonitorEvents) sendMonitorConfig();
 });
-
 followCursorToggle.addEventListener("change", () => {
   if (suppressMonitorEvents) return;
   monitorSelect.disabled = Boolean(followCursorToggle.checked);
   sendMonitorConfig();
 });
 
-for (const btn of document.querySelectorAll("[data-mouse]")) {
-  btn.addEventListener("click", () => {
-    sendControl({ kind: "mouse_click", button: btn.dataset.mouse });
-  });
-}
-
+for (const btn of document.querySelectorAll("[data-mouse]")) bindHoldButton(btn);
 for (const btn of document.querySelectorAll("[data-scroll]")) {
   btn.addEventListener("click", () => {
     const dy = Number(btn.dataset.scroll || "0");
@@ -456,70 +460,43 @@ for (const btn of document.querySelectorAll("[data-scroll]")) {
   });
 }
 
-let pointerActive = false;
-let lastX = 0;
-let lastY = 0;
-const sensitivity = 1.3;
-
-function startMove(x, y) {
-  pointerActive = true;
-  lastX = x;
-  lastY = y;
-}
-
-function moveTo(x, y) {
-  if (!pointerActive) return;
-  const dx = (x - lastX) * sensitivity;
-  const dy = (y - lastY) * sensitivity;
-  lastX = x;
-  lastY = y;
-  if (Math.abs(dx) < 0.2 && Math.abs(dy) < 0.2) return;
-  sendControl({ kind: "mouse_move", dx, dy });
-}
-
-function stopMove() {
-  pointerActive = false;
-}
-
 trackpad.addEventListener("pointerdown", (event) => {
   trackpad.setPointerCapture(event.pointerId);
   startMove(event.clientX, event.clientY);
 });
-
-trackpad.addEventListener("pointermove", (event) => {
-  moveTo(event.clientX, event.clientY);
-});
-
-trackpad.addEventListener("pointerup", () => stopMove());
-trackpad.addEventListener("pointercancel", () => stopMove());
-trackpad.addEventListener("pointerleave", () => stopMove());
-
+trackpad.addEventListener("pointermove", (event) => moveTo(event.clientX, event.clientY));
+trackpad.addEventListener("pointerup", stopMove);
+trackpad.addEventListener("pointercancel", stopMove);
+trackpad.addEventListener("pointerleave", stopMove);
 trackpad.addEventListener("touchstart", (event) => {
   event.preventDefault();
   const t = event.touches[0];
-  if (!t) return;
-  startMove(t.clientX, t.clientY);
+  if (t) startMove(t.clientX, t.clientY);
 }, { passive: false });
-
 trackpad.addEventListener("touchmove", (event) => {
   event.preventDefault();
   const t = event.touches[0];
-  if (!t) return;
-  moveTo(t.clientX, t.clientY);
+  if (t) moveTo(t.clientX, t.clientY);
 }, { passive: false });
+trackpad.addEventListener("touchend", stopMove);
+trackpad.addEventListener("touchcancel", stopMove);
 
-trackpad.addEventListener("touchend", () => stopMove());
-trackpad.addEventListener("touchcancel", () => stopMove());
+window.addEventListener("blur", () => {
+  for (const key of [...heldKeys]) {
+    sendControl({ kind: "key_up", key });
+    heldKeys.delete(key);
+  }
+  renderKeyboard();
+});
+window.addEventListener("orientationchange", updateOrientationState);
+window.addEventListener("resize", updateOrientationState);
+setInterval(flushMouseMove, 16);
 
-if (!deviceNameInput.value.trim()) {
-  deviceNameInput.value = detectDeviceName();
-} else if (deviceNameInput.value === "My Phone") {
+if (!deviceNameInput.value.trim() || deviceNameInput.value === "My Phone") {
   deviceNameInput.value = detectDeviceName();
 }
 
-window.addEventListener("orientationchange", updateOrientationState);
-window.addEventListener("resize", updateOrientationState);
-
+renderKeyboard();
 connect();
 refreshAudioButton();
 refreshRooms();

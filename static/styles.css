@@ -315,16 +315,27 @@ button.danger {
 }
 
 @media (orientation: landscape) {
-  .mobile-page,
-  .mobile-page body {
+  .mobile-page {
     overflow: hidden;
+  }
+
+  .mobile-page .mobile-shell {
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  #control-section {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
 
   .mobile-page .container {
     max-width: none;
     padding: 6px;
-    height: 100vh;
-    min-height: 100vh;
+    height: 100dvh;
+    min-height: 100dvh;
     overflow: hidden;
   }
 
@@ -346,6 +357,7 @@ button.danger {
 
   .room-panel {
     grid-area: room;
+    min-height: 0;
   }
 
   .preview-card {
@@ -371,6 +383,7 @@ button.danger {
   .keyboard {
     flex: 1;
     min-height: 0;
+    overflow: auto;
   }
 
   .pointer-panel {

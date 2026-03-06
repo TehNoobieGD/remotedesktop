@@ -42,6 +42,8 @@ except Exception:
 
 keyboard = KeyboardController()
 mouse = MouseController()
+held_keys: dict[str, object] = {}
+held_mouse_buttons: set[str] = set()
 
 
 SPECIAL_KEYS = {
@@ -114,6 +116,37 @@ def tap_key(value: str) -> None:
     keyboard.release(parsed)
 
 
+def key_down(value: str) -> None:
+    parsed = parse_key(value)
+    if parsed is None:
+        print(f"[WARN] Unknown key down: {value}")
+        return
+    key_id = value.lower()
+    if key_id in held_keys:
+        return
+    keyboard.press(parsed)
+    held_keys[key_id] = parsed
+
+
+def key_up(value: str) -> None:
+    key_id = value.lower()
+    parsed = held_keys.pop(key_id, None)
+    if parsed is None:
+        parsed = parse_key(value)
+    if parsed is None:
+        return
+    keyboard.release(parsed)
+
+
+def release_all_held_keys() -> None:
+    for _, parsed in list(held_keys.items()):
+        try:
+            keyboard.release(parsed)
+        except Exception:
+            pass
+    held_keys.clear()
+
+
 def press_combo(modifiers: list[str], key_value: str) -> None:
     modifier_objs = []
     for mod in modifiers:
@@ -140,6 +173,37 @@ def do_mouse_click(button_name: str) -> None:
     }
     button = button_map.get(button_name, Button.left)
     mouse.click(button)
+
+
+def mouse_button_down(button_name: str) -> None:
+    button_map = {
+        "left": Button.left,
+        "right": Button.right,
+        "middle": Button.middle,
+    }
+    button = button_map.get(button_name, Button.left)
+    if button_name in held_mouse_buttons:
+        return
+    mouse.press(button)
+    held_mouse_buttons.add(button_name)
+
+
+def mouse_button_up(button_name: str) -> None:
+    button_map = {
+        "left": Button.left,
+        "right": Button.right,
+        "middle": Button.middle,
+    }
+    button = button_map.get(button_name, Button.left)
+    try:
+        mouse.release(button)
+    finally:
+        held_mouse_buttons.discard(button_name)
+
+
+def release_all_mouse_buttons() -> None:
+    for button_name in list(held_mouse_buttons):
+        mouse_button_up(button_name)
 
 
 def to_ws_url(base_url: str) -> str:
@@ -299,13 +363,14 @@ def _find_sounddevice_loopback_device() -> int | None:
 def _audio_worker_sounddevice(
     out_queue: queue.Queue[bytes], stop_event: threading.Event, status_queue: queue.Queue[str], sample_rate: int
 ) -> None:
-    loopback_dev = _find_sounddevice_loopback_device()
-    if loopback_dev is None:
-        status_queue.put("error:No WASAPI loopback device found.")
-        return
     try:
-        dev_info = sd.query_devices(loopback_dev)
-        status_queue.put(f"backend:sounddevice ({dev_info['name']})")
+        default_out = sd.default.device[1]
+        if default_out is None or int(default_out) < 0:
+            status_queue.put("error:No default output device for WASAPI loopback.")
+            return
+        dev_info = sd.query_devices(default_out)
+        wasapi = sd.WasapiSettings(loopback=True)
+        status_queue.put(f"backend:sounddevice-wasapi ({dev_info['name']})")
 
         def callback(indata, frames, _time, _status):
             if stop_event.is_set():
@@ -323,11 +388,12 @@ def _audio_worker_sounddevice(
                 pass
 
         with sd.InputStream(
-            device=loopback_dev,
+            device=default_out,
             channels=1,
             samplerate=sample_rate,
             blocksize=1024,
-            dtype="int16",
+            dtype="float32",
+            extra_settings=wasapi,
             callback=callback,
         ):
             while not stop_event.is_set():
@@ -407,17 +473,27 @@ async def run_agent(server: str, room_code: str, password: str, fps: int) -> Non
                             mouse.move(dx, dy)
                         elif kind == "mouse_click":
                             do_mouse_click(str(event.get("button", "left")))
+                        elif kind == "mouse_button_down":
+                            mouse_button_down(str(event.get("button", "left")))
+                        elif kind == "mouse_button_up":
+                            mouse_button_up(str(event.get("button", "left")))
                         elif kind == "mouse_scroll":
                             dx = int(float(event.get("dx", 0)))
                             dy = int(float(event.get("dy", 0)))
                             mouse.scroll(dx, dy)
                         elif kind == "key_tap":
                             tap_key(str(event.get("key", "")))
+                        elif kind == "key_down":
+                            key_down(str(event.get("key", "")))
+                        elif kind == "key_up":
+                            key_up(str(event.get("key", "")))
                         elif kind == "key_combo":
                             modifiers = event.get("modifiers", [])
                             if isinstance(modifiers, list):
                                 press_combo([str(m) for m in modifiers], str(event.get("key", "")))
                 finally:
+                    release_all_held_keys()
+                    release_all_mouse_buttons()
                     stream_task.cancel()
                     audio_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
