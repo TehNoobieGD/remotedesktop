@@ -18,6 +18,7 @@ const cursorDot = document.getElementById("cursor-dot");
 const monitorSelect = document.getElementById("monitor-select");
 const followCursorToggle = document.getElementById("follow-cursor-toggle");
 const audioToggle = document.getElementById("audio-toggle");
+const audioDebugMobile = document.getElementById("audio-debug-mobile");
 const roomsList = document.getElementById("rooms-list");
 const refreshRoomsBtn = document.getElementById("refresh-rooms-btn");
 
@@ -27,6 +28,7 @@ let lastJoinPayload = null;
 let monitors = [];
 let suppressMonitorEvents = false;
 let audioAvailable = false;
+let audioAllowedByHost = false;
 let audioEnabled = false;
 let audioCtx = null;
 let audioNextTime = 0;
@@ -120,6 +122,11 @@ function onMessage(raw) {
   if (data.type === "room_status") {
     infoAgent.textContent = data.agent_connected ? "online" : "offline";
     audioAvailable = Boolean(data.audio_available);
+    audioAllowedByHost = Boolean(data.audio_allowed);
+    if (audioDebugMobile) {
+      audioDebugMobile.textContent =
+        data.audio_error || (audioAvailable ? (audioAllowedByHost ? "ready" : "host disabled") : "unavailable");
+    }
     refreshAudioButton();
     if (Array.isArray(data.monitors)) {
       monitors = data.monitors;
@@ -145,6 +152,7 @@ function onMessage(raw) {
     setStatus(data.message || "Room closed.");
     joined = false;
     audioEnabled = false;
+    audioAllowedByHost = false;
     activeModifiers.clear();
     controlSection.classList.add("hidden");
     joinSection.classList.remove("hidden");
@@ -221,7 +229,7 @@ function paintCursor(cursor) {
   const sourceW = frameMonitorWidth > 0 ? frameMonitorWidth : containerW;
   const sourceH = frameMonitorHeight > 0 ? frameMonitorHeight : containerH;
 
-  const scale = Math.max(containerW / sourceW, containerH / sourceH);
+  const scale = Math.min(containerW / sourceW, containerH / sourceH);
   const drawW = sourceW * scale;
   const drawH = sourceH * scale;
   const offsetX = (containerW - drawW) / 2;
@@ -276,9 +284,11 @@ function renderRoomsList(rooms) {
 
 function refreshAudioButton() {
   if (!audioToggle) return;
-  audioToggle.disabled = !audioAvailable || !joined;
+  audioToggle.disabled = !audioAvailable || !joined || !audioAllowedByHost;
   if (!audioAvailable) {
     audioToggle.textContent = "Audio Unavailable";
+  } else if (!audioAllowedByHost) {
+    audioToggle.textContent = "Host Must Enable Audio";
   } else if (audioEnabled) {
     audioToggle.textContent = "Disable Audio";
   } else {
@@ -356,7 +366,7 @@ joinBtn.addEventListener("click", () => {
 refreshRoomsBtn.addEventListener("click", refreshRooms);
 
 audioToggle.addEventListener("click", async () => {
-  if (!joined || !audioAvailable) return;
+  if (!joined || !audioAvailable || !audioAllowedByHost) return;
   if (!audioEnabled) {
     try {
       const ctx = ensureAudioContext();

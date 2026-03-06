@@ -4,3 +4,4 @@ mss==10.1.0
 pillow==11.1.0
 numpy==2.2.3
 soundcard==0.4.3
+sounddevice==0.5.1

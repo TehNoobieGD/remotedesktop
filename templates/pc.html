@@ -30,6 +30,7 @@
       <p><strong>Room Code:</strong> <span id="room-code">-</span></p>
       <p><strong>Agent:</strong> <span id="agent-status">offline</span></p>
       <p><strong>Audio:</strong> <span id="audio-status">disabled</span></p>
+      <p><strong>Audio Debug:</strong> <span id="audio-debug">-</span></p>
       <button id="toggle-audio-btn" type="button">Enable Audio For Mobile</button>
       <button id="close-room-btn" class="danger">Close Room</button>
     </section>
@@ -44,7 +45,7 @@
       <h2>Run Agent On This PC</h2>
       <p class="muted">Start this after creating room:</p>
       <pre><code>pip install -r agent-requirements.txt
-python agent.py --server https://your-app.onrender.com --room CODE --password YOUR_PASSWORD --fps 15</code></pre>
+python agent.py --server https://your-app.onrender.com --room CODE --password YOUR_PASSWORD --fps 30</code></pre>
     </section>
 
     <p id="status-line" class="status-line"></p>

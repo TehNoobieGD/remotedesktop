@@ -9,6 +9,7 @@ const roomCodeEl = document.getElementById("room-code");
 const roomPcNameEl = document.getElementById("room-pc-name");
 const agentStatusEl = document.getElementById("agent-status");
 const audioStatusEl = document.getElementById("audio-status");
+const audioDebugEl = document.getElementById("audio-debug");
 const toggleAudioBtn = document.getElementById("toggle-audio-btn");
 const deviceList = document.getElementById("device-list");
 const emptyDevices = document.getElementById("empty-devices");
@@ -70,6 +71,7 @@ function onMessage(raw) {
     audioAllowed = Boolean(data.audio_allowed);
     const audioAvailable = Boolean(data.audio_available);
     audioStatusEl.textContent = audioAllowed ? "enabled" : "disabled";
+    audioDebugEl.textContent = data.audio_error || (audioAvailable ? "ok" : "unavailable");
     toggleAudioBtn.textContent = audioAllowed ? "Disable Audio For Mobile" : "Enable Audio For Mobile";
     toggleAudioBtn.disabled = !audioAvailable;
     if (!audioAvailable) {
@@ -97,6 +99,7 @@ function resetUi() {
   agentStatusEl.textContent = "offline";
   audioAllowed = false;
   audioStatusEl.textContent = "disabled";
+  audioDebugEl.textContent = "-";
   toggleAudioBtn.textContent = "Enable Audio For Mobile";
   toggleAudioBtn.disabled = false;
   renderMobiles([]);

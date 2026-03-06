@@ -4,7 +4,7 @@ This project gives you:
 - A `FastAPI` web service (deploy on Render Web Service).
 - A PC host page (`/pc`) to create a room and see connected phones.
 - A mobile page (`/mobile`) with trackpad + full virtual keyboard (F keys, arrows, numpad, etc.), QWERTY/AZERTY switch, and live preview.
-- A local `agent.py` you run on your PC to apply mouse/keyboard actions, stream preview at 15 FPS target, and stream system audio (no microphone).
+- A local `agent.py` you run on your PC to apply mouse/keyboard actions, stream preview at 30 FPS target, and stream system audio (no microphone).
 - Multi-monitor support:
   - Auto-follow cursor across screens
   - Manual screen selection from mobile
@@ -37,11 +37,11 @@ Open:
 2. On your PC terminal, run:
    ```bash
    pip install -r agent-requirements.txt
-   python agent.py --server https://your-app.onrender.com --room ROOMCODE --password YOUR_PASSWORD --fps 15
+   python agent.py --server https://your-app.onrender.com --room ROOMCODE --password YOUR_PASSWORD --fps 30
    ```
 3. On phone browser, open `/mobile`, enter room code + password, then control via trackpad and keyboard.
 4. Rotate phone to landscape for best control layout (preview on top, keyboard left, trackpad right).
-5. In mobile controls, tap `Enable Audio` to start PC-audio playback (browser requires a user tap).
+5. In `/pc`, enable room audio, then on mobile tap `Enable Audio` (browser requires a user tap).
 
 ## Electron Launcher (optional)
 

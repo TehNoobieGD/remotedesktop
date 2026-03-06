@@ -38,24 +38,27 @@
         Rotate your phone to landscape for full controls.
       </div>
       <div class="control-grid">
-        <section class="card preview-card">
-          <div class="preview-head">
-            <h2>Live Preview</h2>
-            <div class="info-line">
-              <span><strong>PC:</strong> <span id="info-pc">-</span></span>
-              <span><strong>Room:</strong> <span id="info-room">-</span></span>
-              <span><strong>Agent:</strong> <span id="info-agent">offline</span></span>
-            </div>
-            <div class="monitor-controls">
-              <label for="monitor-select">Screen</label>
-              <select id="monitor-select"></select>
-              <label class="follow-wrap">
-                <input id="follow-cursor-toggle" type="checkbox" checked />
-                Auto follow cursor
-              </label>
-              <button id="audio-toggle" type="button">Enable Audio</button>
-            </div>
+        <section class="card room-panel">
+          <h2>Room Info</h2>
+          <div class="info-line">
+            <span><strong>PC:</strong> <span id="info-pc">-</span></span>
+            <span><strong>Room:</strong> <span id="info-room">-</span></span>
+            <span><strong>Agent:</strong> <span id="info-agent">offline</span></span>
+            <span><strong>Audio:</strong> <span id="audio-debug-mobile">-</span></span>
           </div>
+          <div class="monitor-controls">
+            <label for="monitor-select">Screen</label>
+            <select id="monitor-select"></select>
+            <label class="follow-wrap">
+              <input id="follow-cursor-toggle" type="checkbox" checked />
+              Auto follow cursor
+            </label>
+            <button id="audio-toggle" type="button">Enable Audio</button>
+          </div>
+        </section>
+
+        <section class="card preview-card">
+          <h2>Screenshare Preview</h2>
           <div class="preview-shell">
             <img id="screen-preview" alt="PC screen preview" />
             <div id="cursor-dot" class="cursor-dot hidden"></div>

@@ -20,11 +20,24 @@ from pynput.mouse import Controller as MouseController
 
 try:
     import numpy as np
+
+    NUMPY_OK = True
+except Exception:
+    NUMPY_OK = False
+
+try:
     import soundcard as sc
 
-    AUDIO_IMPORT_OK = True
+    SOUNDCARD_OK = True
 except Exception:
-    AUDIO_IMPORT_OK = False
+    SOUNDCARD_OK = False
+
+try:
+    import sounddevice as sd
+
+    SOUNDDEVICE_OK = True
+except Exception:
+    SOUNDDEVICE_OK = False
 
 
 keyboard = KeyboardController()
@@ -146,7 +159,7 @@ class StreamConfig:
     selected_monitor_id: int | None = None
     follow_cursor: bool = True
     audio_enabled: bool = False
-    fps: int = 15
+    fps: int = 30
 
 
 def list_monitors() -> list[dict]:
@@ -242,27 +255,103 @@ def capture_frame_with_cursor(config: StreamConfig) -> dict | None:
         return None
 
 
-def audio_capture_worker(
-    out_queue: queue.Queue[bytes], stop_event: threading.Event, sample_rate: int = 24000
+def _audio_worker_soundcard(
+    out_queue: queue.Queue[bytes], stop_event: threading.Event, status_queue: queue.Queue[str], sample_rate: int
 ) -> None:
-    if not AUDIO_IMPORT_OK:
+    speaker = sc.default_speaker()
+    if speaker is None:
+        status_queue.put("error:No default speaker device found.")
+        return
+    status_queue.put(f"backend:soundcard ({speaker.name})")
+    mic = sc.get_microphone(str(getattr(speaker, "id", speaker.name)), include_loopback=True)
+    with mic.recorder(samplerate=sample_rate, channels=2, blocksize=1024) as rec:
+        while not stop_event.is_set():
+            data = rec.record(numframes=1024)
+            mono = data.mean(axis=1)
+            pcm = np.clip(mono * 32767.0, -32768, 32767).astype(np.int16).tobytes()
+            try:
+                out_queue.put(pcm, timeout=0.2)
+            except queue.Full:
+                continue
+
+
+def _find_sounddevice_loopback_device() -> int | None:
+    if not SOUNDDEVICE_OK:
+        return None
+    try:
+        devices = sd.query_devices()
+        hostapis = sd.query_hostapis()
+        for idx, dev in enumerate(devices):
+            if int(dev.get("max_input_channels", 0)) < 1:
+                continue
+            name = str(dev.get("name", "")).lower()
+            host_idx = int(dev.get("hostapi", -1))
+            host_name = ""
+            if 0 <= host_idx < len(hostapis):
+                host_name = str(hostapis[host_idx].get("name", "")).lower()
+            if "loopback" in name and "wasapi" in host_name:
+                return idx
+    except Exception:
+        return None
+    return None
+
+
+def _audio_worker_sounddevice(
+    out_queue: queue.Queue[bytes], stop_event: threading.Event, status_queue: queue.Queue[str], sample_rate: int
+) -> None:
+    loopback_dev = _find_sounddevice_loopback_device()
+    if loopback_dev is None:
+        status_queue.put("error:No WASAPI loopback device found.")
         return
     try:
-        speaker = sc.default_speaker()
-        if speaker is None:
-            return
-        mic = sc.get_microphone(str(speaker.name), include_loopback=True)
-        with mic.recorder(samplerate=sample_rate, channels=2, blocksize=1024) as rec:
+        dev_info = sd.query_devices(loopback_dev)
+        status_queue.put(f"backend:sounddevice ({dev_info['name']})")
+
+        def callback(indata, frames, _time, _status):
+            if stop_event.is_set():
+                return
+            if indata is None or len(indata) == 0:
+                return
+            mono = indata[:, 0] if indata.ndim > 1 else indata
+            if mono.dtype != np.int16:
+                mono = np.clip(mono, -1.0, 1.0)
+                mono = (mono * 32767).astype(np.int16)
+            data = mono.tobytes()
+            try:
+                out_queue.put_nowait(data)
+            except queue.Full:
+                pass
+
+        with sd.InputStream(
+            device=loopback_dev,
+            channels=1,
+            samplerate=sample_rate,
+            blocksize=1024,
+            dtype="int16",
+            callback=callback,
+        ):
             while not stop_event.is_set():
-                data = rec.record(numframes=1024)
-                mono = data.mean(axis=1)
-                pcm = np.clip(mono * 32767.0, -32768, 32767).astype(np.int16).tobytes()
-                try:
-                    out_queue.put(pcm, timeout=0.2)
-                except queue.Full:
-                    continue
+                time.sleep(0.05)
     except Exception as ex:
-        print(f"[WARN] Audio worker stopped: {ex}")
+        status_queue.put(f"error:{ex}")
+
+
+def audio_capture_worker(
+    out_queue: queue.Queue[bytes], stop_event: threading.Event, status_queue: queue.Queue[str], sample_rate: int = 24000
+) -> None:
+    if SOUNDCARD_OK and NUMPY_OK:
+        try:
+            _audio_worker_soundcard(out_queue, stop_event, status_queue, sample_rate)
+            return
+        except Exception as ex:
+            status_queue.put(f"error:soundcard backend failed: {ex}")
+    if SOUNDDEVICE_OK and NUMPY_OK:
+        try:
+            _audio_worker_sounddevice(out_queue, stop_event, status_queue, sample_rate)
+            return
+        except Exception as ex:
+            status_queue.put(f"error:sounddevice backend failed: {ex}")
+    status_queue.put("error:No supported audio capture backend is available.")
 
 
 async def run_agent(server: str, room_code: str, password: str, fps: int) -> None:
@@ -354,7 +443,8 @@ async def safe_send_agent_info(ws, config: StreamConfig) -> None:
                 "monitors": monitors,
                 "selected_monitor_id": selected,
                 "follow_cursor": config.follow_cursor,
-                "audio_available": AUDIO_IMPORT_OK,
+                "audio_available": (SOUNDCARD_OK and NUMPY_OK) or (SOUNDDEVICE_OK and NUMPY_OK),
+                "audio_error": None,
             }
         )
     )
@@ -379,7 +469,8 @@ async def stream_screen(ws, config: StreamConfig, fps: int = 5) -> None:
                             "monitors": frame["monitors"],
                             "selected_monitor_id": frame["monitor_id"],
                             "follow_cursor": frame["follow_cursor"],
-                            "audio_available": AUDIO_IMPORT_OK,
+                            "audio_available": (SOUNDCARD_OK and NUMPY_OK) or (SOUNDDEVICE_OK and NUMPY_OK),
+                            "audio_error": None,
                         }
                     )
                 )
@@ -400,19 +491,53 @@ async def stream_screen(ws, config: StreamConfig, fps: int = 5) -> None:
 
 
 async def stream_audio(ws, config: StreamConfig) -> None:
-    if not AUDIO_IMPORT_OK:
+    if not ((SOUNDCARD_OK and NUMPY_OK) or (SOUNDDEVICE_OK and NUMPY_OK)):
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "audio_state",
+                    "available": False,
+                    "error": "Audio capture backend not installed on host PC.",
+                }
+            )
+        )
         return
 
     pcm_queue: queue.Queue[bytes] = queue.Queue(maxsize=40)
+    status_queue: queue.Queue[str] = queue.Queue(maxsize=20)
     stop_event = threading.Event()
     worker = threading.Thread(
         target=audio_capture_worker,
-        args=(pcm_queue, stop_event, 24000),
+        args=(pcm_queue, stop_event, status_queue, 24000),
         daemon=True,
     )
     worker.start()
+    last_audio_data = time.time()
+    await ws.send(json.dumps({"type": "audio_state", "available": True, "error": None}))
     try:
         while True:
+            while not status_queue.empty():
+                msg = status_queue.get_nowait()
+                if msg.startswith("backend:"):
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "audio_state",
+                                "available": True,
+                                "error": msg.replace("backend:", "Using ").strip(),
+                            }
+                        )
+                    )
+                elif msg.startswith("error:"):
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "audio_state",
+                                "available": False,
+                                "error": msg.replace("error:", "").strip(),
+                            }
+                        )
+                    )
             if not config.audio_enabled:
                 await asyncio.sleep(0.2)
                 continue
@@ -420,7 +545,18 @@ async def stream_audio(ws, config: StreamConfig) -> None:
             try:
                 pcm = await asyncio.to_thread(pcm_queue.get, True, 1.0)
             except queue.Empty:
+                if time.time() - last_audio_data > 3:
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "audio_state",
+                                "available": False,
+                                "error": "No loopback audio captured yet.",
+                            }
+                        )
+                    )
                 continue
+            last_audio_data = time.time()
 
             await ws.send(
                 json.dumps(
@@ -442,7 +578,7 @@ def main() -> None:
     parser.add_argument("--server", required=True, help="Render URL, e.g. https://your-app.onrender.com")
     parser.add_argument("--room", required=True, help="Room code")
     parser.add_argument("--password", required=True, help="Room password")
-    parser.add_argument("--fps", type=int, default=15, help="Target preview FPS (default 15)")
+    parser.add_argument("--fps", type=int, default=30, help="Target preview FPS (default 30)")
     args = parser.parse_args()
 
     asyncio.run(run_agent(args.server, args.room, args.password, args.fps))

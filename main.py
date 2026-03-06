@@ -64,6 +64,7 @@ class Room:
     follow_cursor: bool = True
     audio_available: bool = False
     audio_allowed: bool = False
+    audio_error: str | None = None
 
     def mobile_payload(self) -> list[dict[str, Any]]:
         return [
@@ -101,6 +102,7 @@ def room_status(room: Room) -> dict[str, Any]:
         "follow_cursor": room.follow_cursor,
         "audio_available": room.audio_available,
         "audio_allowed": room.audio_allowed,
+        "audio_error": room.audio_error,
         "audio_subscribers": sum(1 for m in room.mobiles.values() if m.audio_enabled),
     }
 
@@ -480,6 +482,7 @@ async def ws_agent(websocket: WebSocket) -> None:
                 selected = data.get("selected_monitor_id")
                 follow = data.get("follow_cursor")
                 audio_available = data.get("audio_available")
+                audio_error = data.get("audio_error")
                 if isinstance(monitors, list):
                     joined_room.available_monitors = [
                         m for m in monitors if isinstance(m, dict)
@@ -490,6 +493,10 @@ async def ws_agent(websocket: WebSocket) -> None:
                     joined_room.follow_cursor = follow
                 if isinstance(audio_available, bool):
                     joined_room.audio_available = audio_available
+                if isinstance(audio_error, str):
+                    joined_room.audio_error = audio_error
+                elif audio_error is None:
+                    joined_room.audio_error = None
                 await broadcast_room_status(joined_room)
             elif msg_type == "screen_frame" and joined_room is not None:
                 jpeg = data.get("jpeg")
@@ -537,6 +544,16 @@ async def ws_agent(websocket: WebSocket) -> None:
                             "ts": float(data.get("ts", time.time())),
                         },
                     )
+            elif msg_type == "audio_state" and joined_room is not None:
+                available = data.get("available")
+                error = data.get("error")
+                if isinstance(available, bool):
+                    joined_room.audio_available = available
+                if isinstance(error, str):
+                    joined_room.audio_error = error
+                elif error is None:
+                    joined_room.audio_error = None
+                await broadcast_room_status(joined_room)
     except WebSocketDisconnect:
         pass
     finally:
