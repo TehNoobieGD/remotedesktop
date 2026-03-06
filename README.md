@@ -3,8 +3,8 @@
 This project gives you:
 - A `FastAPI` web service (deploy on Render Web Service).
 - A PC host page (`/pc`) to create a room and see connected phones.
-- A mobile page (`/mobile`) with trackpad + full virtual keyboard (F keys, arrows, numpad, etc.) and QWERTY/AZERTY switch.
-- A local `agent.py` you run on your PC to apply mouse/keyboard actions.
+- A mobile page (`/mobile`) with trackpad + full virtual keyboard (F keys, arrows, numpad, etc.), QWERTY/AZERTY switch, and live preview.
+- A local `agent.py` you run on your PC to apply mouse/keyboard actions and stream screen preview at about 5 FPS.
 
 ## Render Service Type
 
@@ -32,9 +32,11 @@ Open:
 1. On PC browser, open `/pc`, set PC name + room password, click `Create Room`.
 2. On your PC terminal, run:
    ```bash
+   pip install -r agent-requirements.txt
    python agent.py --server https://your-app.onrender.com --room ROOMCODE --password YOUR_PASSWORD
    ```
 3. On phone browser, open `/mobile`, enter room code + password, then control via trackpad and keyboard.
+4. Rotate phone to landscape for best control layout (preview on top, keyboard left, trackpad right).
 
 ## Notes
 

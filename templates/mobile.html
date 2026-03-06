@@ -27,40 +27,53 @@
     </section>
 
     <section id="control-section" class="hidden">
-      <section class="card">
-        <h2>Connected</h2>
-        <p><strong>PC:</strong> <span id="info-pc">-</span></p>
-        <p><strong>Room:</strong> <span id="info-room">-</span></p>
-        <p><strong>Agent:</strong> <span id="info-agent">offline</span></p>
-      </section>
+      <div id="rotate-warning" class="rotate-warning hidden">
+        Rotate your phone to landscape for full controls.
+      </div>
+      <div class="control-grid">
+        <section class="card preview-card">
+          <div class="preview-head">
+            <h2>Live Preview</h2>
+            <div class="info-line">
+              <span><strong>PC:</strong> <span id="info-pc">-</span></span>
+              <span><strong>Room:</strong> <span id="info-room">-</span></span>
+              <span><strong>Agent:</strong> <span id="info-agent">offline</span></span>
+            </div>
+          </div>
+          <div class="preview-shell">
+            <img id="screen-preview" alt="PC screen preview" />
+            <div id="preview-empty" class="preview-empty">No preview yet. Start agent on PC.</div>
+          </div>
+        </section>
 
-      <section class="card">
-        <h2>Trackpad</h2>
-        <div id="trackpad" class="trackpad">
-          <span>Swipe here to move mouse</span>
-        </div>
-        <div class="mouse-buttons">
-          <button data-mouse="left">Left Click</button>
-          <button data-mouse="right">Right Click</button>
-          <button data-mouse="middle">Middle Click</button>
-        </div>
-        <div class="mouse-buttons">
-          <button data-scroll="-1">Scroll Up</button>
-          <button data-scroll="1">Scroll Down</button>
-        </div>
-      </section>
+        <section class="card keyboard-panel">
+          <div class="keyboard-toolbar">
+            <h2>Keyboard</h2>
+            <label for="layout-select">Layout</label>
+            <select id="layout-select">
+              <option value="qwerty">QWERTY</option>
+              <option value="azerty">AZERTY</option>
+            </select>
+          </div>
+          <div id="keyboard" class="keyboard"></div>
+        </section>
 
-      <section class="card">
-        <h2>Keyboard</h2>
-        <div class="keyboard-toolbar">
-          <label for="layout-select">Layout</label>
-          <select id="layout-select">
-            <option value="qwerty">QWERTY</option>
-            <option value="azerty">AZERTY</option>
-          </select>
-        </div>
-        <div id="keyboard" class="keyboard"></div>
-      </section>
+        <section class="card pointer-panel">
+          <h2>Trackpad</h2>
+          <div id="trackpad" class="trackpad">
+            <span>Swipe to move mouse</span>
+          </div>
+          <div class="mouse-buttons">
+            <button data-mouse="left">Left</button>
+            <button data-mouse="right">Right</button>
+            <button data-mouse="middle">Middle</button>
+          </div>
+          <div class="mouse-buttons two">
+            <button data-scroll="-1">Scroll Up</button>
+            <button data-scroll="1">Scroll Down</button>
+          </div>
+        </section>
+      </div>
     </section>
 
     <p id="status-line" class="status-line"></p>

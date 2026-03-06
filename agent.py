@@ -1,9 +1,15 @@
 import argparse
 import asyncio
+import base64
+import contextlib
 import json
+import time
+from io import BytesIO
 from urllib.parse import urlparse
 
+import mss
 import websockets
+from PIL import Image
 from pynput.keyboard import Controller as KeyboardController
 from pynput.keyboard import Key, KeyCode
 from pynput.mouse import Button
@@ -140,39 +146,77 @@ async def run_agent(server: str, room_code: str, password: str) -> None:
                     )
                 )
                 print("[INFO] Agent connected and authenticated.")
-                async for raw in ws:
-                    data = json.loads(raw)
-                    msg_type = data.get("type")
-                    if msg_type == "error":
-                        print(f"[ERROR] {data.get('message', 'Unknown server error')}")
-                        break
-                    if msg_type == "room_closed":
-                        print("[INFO] Room closed by host.")
-                        break
-                    if msg_type != "control":
-                        continue
+                stream_task = asyncio.create_task(stream_screen(ws, fps=5))
+                try:
+                    async for raw in ws:
+                        data = json.loads(raw)
+                        msg_type = data.get("type")
+                        if msg_type == "error":
+                            print(f"[ERROR] {data.get('message', 'Unknown server error')}")
+                            break
+                        if msg_type == "room_closed":
+                            print("[INFO] Room closed by host.")
+                            break
+                        if msg_type != "control":
+                            continue
 
-                    event = data.get("event", {})
-                    kind = event.get("kind")
-                    if kind == "mouse_move":
-                        dx = int(float(event.get("dx", 0)))
-                        dy = int(float(event.get("dy", 0)))
-                        mouse.move(dx, dy)
-                    elif kind == "mouse_click":
-                        do_mouse_click(str(event.get("button", "left")))
-                    elif kind == "mouse_scroll":
-                        dx = int(float(event.get("dx", 0)))
-                        dy = int(float(event.get("dy", 0)))
-                        mouse.scroll(dx, dy)
-                    elif kind == "key_tap":
-                        tap_key(str(event.get("key", "")))
-                    elif kind == "key_combo":
-                        modifiers = event.get("modifiers", [])
-                        if isinstance(modifiers, list):
-                            press_combo([str(m) for m in modifiers], str(event.get("key", "")))
+                        event = data.get("event", {})
+                        kind = event.get("kind")
+                        if kind == "mouse_move":
+                            dx = int(float(event.get("dx", 0)))
+                            dy = int(float(event.get("dy", 0)))
+                            mouse.move(dx, dy)
+                        elif kind == "mouse_click":
+                            do_mouse_click(str(event.get("button", "left")))
+                        elif kind == "mouse_scroll":
+                            dx = int(float(event.get("dx", 0)))
+                            dy = int(float(event.get("dy", 0)))
+                            mouse.scroll(dx, dy)
+                        elif kind == "key_tap":
+                            tap_key(str(event.get("key", "")))
+                        elif kind == "key_combo":
+                            modifiers = event.get("modifiers", [])
+                            if isinstance(modifiers, list):
+                                press_combo([str(m) for m in modifiers], str(event.get("key", "")))
+                finally:
+                    stream_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await stream_task
         except Exception as ex:
             print(f"[WARN] Disconnected: {ex}")
             await asyncio.sleep(2)
+
+
+def capture_frame() -> str | None:
+    try:
+        with mss.mss() as sct:
+            monitor = sct.monitors[1]
+            shot = sct.grab(monitor)
+            image = Image.frombytes("RGB", shot.size, shot.rgb)
+            image.thumbnail((960, 540))
+            output = BytesIO()
+            image.save(output, format="JPEG", quality=55, optimize=True)
+            return base64.b64encode(output.getvalue()).decode("ascii")
+    except Exception as ex:
+        print(f"[WARN] Screen capture failed: {ex}")
+        return None
+
+
+async def stream_screen(ws, fps: int = 5) -> None:
+    interval = 1 / max(1, fps)
+    while True:
+        jpeg = await asyncio.to_thread(capture_frame)
+        if jpeg:
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "screen_frame",
+                        "jpeg": jpeg,
+                        "ts": time.time(),
+                    }
+                )
+            )
+        await asyncio.sleep(interval)
 
 
 def main() -> None:

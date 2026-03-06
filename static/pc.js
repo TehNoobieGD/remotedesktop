@@ -14,6 +14,17 @@ const emptyDevices = document.getElementById("empty-devices");
 let ws = null;
 let roomCreated = false;
 
+function detectPcName() {
+  const platform = navigator.platform || "PC";
+  const ua = navigator.userAgent || "";
+  let browser = "Browser";
+  if (ua.includes("Edg")) browser = "Edge";
+  else if (ua.includes("Chrome")) browser = "Chrome";
+  else if (ua.includes("Firefox")) browser = "Firefox";
+  else if (ua.includes("Safari")) browser = "Safari";
+  return `${platform} (${browser})`;
+}
+
 function wsUrl(path) {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   return `${scheme}://${location.host}${path}`;
@@ -122,3 +133,7 @@ closeBtn.addEventListener("click", () => {
 });
 
 connect();
+
+if (!pcNameInput.value.trim() || pcNameInput.value === "My PC") {
+  pcNameInput.value = detectPcName();
+}

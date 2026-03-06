@@ -1,0 +1,4 @@
+websockets==15.0.1
+pynput==1.7.7
+mss==10.1.0
+pillow==11.1.0

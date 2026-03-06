@@ -52,6 +52,8 @@ class Room:
     host_socket: WebSocket | None = None
     agent_socket: WebSocket | None = None
     mobiles: dict[str, MobileClient] = field(default_factory=dict)
+    latest_frame_jpeg: str | None = None
+    latest_frame_ts: float | None = None
 
     def mobile_payload(self) -> list[dict[str, Any]]:
         return [
@@ -91,6 +93,11 @@ async def broadcast_room_status(room: Room) -> None:
     payload = room_status(room)
     await safe_send(room.host_socket, payload)
     await safe_send(room.agent_socket, payload)
+    for mobile in list(room.mobiles.values()):
+        await safe_send(mobile.websocket, payload)
+
+
+async def broadcast_screen_frame(room: Room, payload: dict[str, Any]) -> None:
     for mobile in list(room.mobiles.values()):
         await safe_send(mobile.websocket, payload)
 
@@ -268,6 +275,15 @@ async def ws_mobile(websocket: WebSocket) -> None:
                         "agent_connected": room.agent_socket is not None,
                     },
                 )
+                if room.latest_frame_jpeg:
+                    await safe_send(
+                        websocket,
+                        {
+                            "type": "screen_frame",
+                            "jpeg": room.latest_frame_jpeg,
+                            "ts": room.latest_frame_ts,
+                        },
+                    )
                 await broadcast_room_status(room)
             elif msg_type == "control":
                 if not joined_room or not mobile_id:
@@ -348,8 +364,22 @@ async def ws_agent(websocket: WebSocket) -> None:
         while True:
             message = await websocket.receive_text()
             data = json.loads(message)
-            if data.get("type") == "ping":
+            msg_type = data.get("type")
+            if msg_type == "ping":
                 await safe_send(websocket, {"type": "pong"})
+            elif msg_type == "screen_frame" and joined_room is not None:
+                jpeg = data.get("jpeg")
+                if isinstance(jpeg, str) and jpeg:
+                    joined_room.latest_frame_jpeg = jpeg
+                    joined_room.latest_frame_ts = float(data.get("ts", time.time()))
+                    await broadcast_screen_frame(
+                        joined_room,
+                        {
+                            "type": "screen_frame",
+                            "jpeg": jpeg,
+                            "ts": joined_room.latest_frame_ts,
+                        },
+                    )
     except WebSocketDisconnect:
         pass
     finally:

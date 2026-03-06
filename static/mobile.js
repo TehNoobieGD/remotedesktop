@@ -11,117 +11,32 @@ const statusLine = document.getElementById("status-line");
 const trackpad = document.getElementById("trackpad");
 const keyboard = document.getElementById("keyboard");
 const layoutSelect = document.getElementById("layout-select");
+const rotateWarning = document.getElementById("rotate-warning");
+const screenPreview = document.getElementById("screen-preview");
+const previewEmpty = document.getElementById("preview-empty");
 
 let ws = null;
 let joined = false;
+let lastJoinPayload = null;
 const activeModifiers = new Set();
-
 const modifierKeys = new Set(["ctrl", "shift", "alt", "cmd"]);
 
 const layouts = {
   qwerty: [
-    [
-      { label: "Esc", value: "escape" },
-      { label: "F1", value: "f1" }, { label: "F2", value: "f2" }, { label: "F3", value: "f3" },
-      { label: "F4", value: "f4" }, { label: "F5", value: "f5" }, { label: "F6", value: "f6" },
-      { label: "F7", value: "f7" }, { label: "F8", value: "f8" }, { label: "F9", value: "f9" },
-      { label: "F10", value: "f10" }, { label: "F11", value: "f11" }, { label: "F12", value: "f12" },
-      { label: "PrtSc", value: "print_screen", width: "w3" }
-    ],
-    [
-      { label: "`", value: "`" }, { label: "1", value: "1" }, { label: "2", value: "2" },
-      { label: "3", value: "3" }, { label: "4", value: "4" }, { label: "5", value: "5" },
-      { label: "6", value: "6" }, { label: "7", value: "7" }, { label: "8", value: "8" },
-      { label: "9", value: "9" }, { label: "0", value: "0" }, { label: "-", value: "-" },
-      { label: "=", value: "=" }, { label: "Backspace", value: "backspace", width: "w4" },
-      { label: "NumLock", value: "num_lock", width: "w3" }, { label: "N7", value: "numpad_7" },
-      { label: "N8", value: "numpad_8" }, { label: "N9", value: "numpad_9" }, { label: "N/", value: "numpad_divide" }
-    ],
-    [
-      { label: "Tab", value: "tab", width: "w3" }, { label: "Q", value: "q" }, { label: "W", value: "w" },
-      { label: "E", value: "e" }, { label: "R", value: "r" }, { label: "T", value: "t" },
-      { label: "Y", value: "y" }, { label: "U", value: "u" }, { label: "I", value: "i" },
-      { label: "O", value: "o" }, { label: "P", value: "p" }, { label: "[", value: "[" },
-      { label: "]", value: "]" }, { label: "\\", value: "\\" }, { label: "N4", value: "numpad_4" },
-      { label: "N5", value: "numpad_5" }, { label: "N6", value: "numpad_6" }, { label: "N*", value: "numpad_multiply" }
-    ],
-    [
-      { label: "Caps", value: "caps_lock", width: "w4" }, { label: "A", value: "a" }, { label: "S", value: "s" },
-      { label: "D", value: "d" }, { label: "F", value: "f" }, { label: "G", value: "g" },
-      { label: "H", value: "h" }, { label: "J", value: "j" }, { label: "K", value: "k" },
-      { label: "L", value: "l" }, { label: ";", value: ";" }, { label: "'", value: "'" },
-      { label: "Enter", value: "enter", width: "w4" }, { label: "N1", value: "numpad_1" },
-      { label: "N2", value: "numpad_2" }, { label: "N3", value: "numpad_3" }, { label: "N-", value: "numpad_subtract" }
-    ],
-    [
-      { label: "Shift", value: "shift", width: "w5" }, { label: "Z", value: "z" }, { label: "X", value: "x" },
-      { label: "C", value: "c" }, { label: "V", value: "v" }, { label: "B", value: "b" },
-      { label: "N", value: "n" }, { label: "M", value: "m" }, { label: ",", value: "," },
-      { label: ".", value: "." }, { label: "/", value: "/" }, { label: "Shift", value: "shift", width: "w5" },
-      { label: "Up", value: "up" }, { label: "N0", value: "numpad_0", width: "w3" },
-      { label: "N.", value: "numpad_decimal" }, { label: "N+", value: "numpad_add", width: "w3" }
-    ],
-    [
-      { label: "Ctrl", value: "ctrl", width: "w3" }, { label: "Win", value: "cmd", width: "w3" },
-      { label: "Alt", value: "alt", width: "w3" }, { label: "Space", value: "space", width: "w6" },
-      { label: "Alt", value: "alt", width: "w3" }, { label: "Menu", value: "menu", width: "w3" },
-      { label: "Ctrl", value: "ctrl", width: "w3" }, { label: "Left", value: "left" },
-      { label: "Down", value: "down" }, { label: "Right", value: "right" }, { label: "Ins", value: "insert" },
-      { label: "Del", value: "delete" }, { label: "Home", value: "home" }, { label: "End", value: "end" },
-      { label: "PgUp", value: "page_up" }, { label: "PgDn", value: "page_down" }, { label: "NEnter", value: "numpad_enter", width: "w4" }
-    ]
+    [{ label: "Esc", value: "escape" }, { label: "F1", value: "f1" }, { label: "F2", value: "f2" }, { label: "F3", value: "f3" }, { label: "F4", value: "f4" }, { label: "F5", value: "f5" }, { label: "F6", value: "f6" }, { label: "F7", value: "f7" }, { label: "F8", value: "f8" }, { label: "F9", value: "f9" }, { label: "F10", value: "f10" }, { label: "F11", value: "f11" }, { label: "F12", value: "f12" }, { label: "PrtSc", value: "print_screen", units: 2 }],
+    [{ label: "`", value: "`" }, { label: "1", value: "1" }, { label: "2", value: "2" }, { label: "3", value: "3" }, { label: "4", value: "4" }, { label: "5", value: "5" }, { label: "6", value: "6" }, { label: "7", value: "7" }, { label: "8", value: "8" }, { label: "9", value: "9" }, { label: "0", value: "0" }, { label: "-", value: "-" }, { label: "=", value: "=" }, { label: "Backspace", value: "backspace", units: 2 }, { label: "N7", value: "numpad_7" }, { label: "N8", value: "numpad_8" }, { label: "N9", value: "numpad_9" }, { label: "N/", value: "numpad_divide" }],
+    [{ label: "Tab", value: "tab", units: 1.6 }, { label: "Q", value: "q" }, { label: "W", value: "w" }, { label: "E", value: "e" }, { label: "R", value: "r" }, { label: "T", value: "t" }, { label: "Y", value: "y" }, { label: "U", value: "u" }, { label: "I", value: "i" }, { label: "O", value: "o" }, { label: "P", value: "p" }, { label: "[", value: "[" }, { label: "]", value: "]" }, { label: "\\", value: "\\" }, { label: "N4", value: "numpad_4" }, { label: "N5", value: "numpad_5" }, { label: "N6", value: "numpad_6" }, { label: "N*", value: "numpad_multiply" }],
+    [{ label: "Caps", value: "caps_lock", units: 1.9 }, { label: "A", value: "a" }, { label: "S", value: "s" }, { label: "D", value: "d" }, { label: "F", value: "f" }, { label: "G", value: "g" }, { label: "H", value: "h" }, { label: "J", value: "j" }, { label: "K", value: "k" }, { label: "L", value: "l" }, { label: ";", value: ";" }, { label: "'", value: "'" }, { label: "Enter", value: "enter", units: 2 }, { label: "N1", value: "numpad_1" }, { label: "N2", value: "numpad_2" }, { label: "N3", value: "numpad_3" }, { label: "N-", value: "numpad_subtract" }],
+    [{ label: "Shift", value: "shift", units: 2.3 }, { label: "Z", value: "z" }, { label: "X", value: "x" }, { label: "C", value: "c" }, { label: "V", value: "v" }, { label: "B", value: "b" }, { label: "N", value: "n" }, { label: "M", value: "m" }, { label: ",", value: "," }, { label: ".", value: "." }, { label: "/", value: "/" }, { label: "Shift", value: "shift", units: 2.1 }, { label: "Up", value: "up" }, { label: "N0", value: "numpad_0", units: 2 }, { label: "N.", value: "numpad_decimal" }, { label: "N+", value: "numpad_add" }],
+    [{ label: "Ctrl", value: "ctrl", units: 1.4 }, { label: "Win", value: "cmd", units: 1.2 }, { label: "Alt", value: "alt", units: 1.2 }, { label: "Space", value: "space", units: 5 }, { label: "Alt", value: "alt", units: 1.2 }, { label: "Menu", value: "menu", units: 1.2 }, { label: "Ctrl", value: "ctrl", units: 1.4 }, { label: "Left", value: "left" }, { label: "Down", value: "down" }, { label: "Right", value: "right" }, { label: "Ins", value: "insert" }, { label: "Del", value: "delete" }, { label: "Home", value: "home" }, { label: "End", value: "end" }, { label: "PgUp", value: "page_up" }, { label: "PgDn", value: "page_down" }, { label: "NEnt", value: "numpad_enter", units: 1.8 }]
   ],
   azerty: [
-    [
-      { label: "Esc", value: "escape" },
-      { label: "F1", value: "f1" }, { label: "F2", value: "f2" }, { label: "F3", value: "f3" },
-      { label: "F4", value: "f4" }, { label: "F5", value: "f5" }, { label: "F6", value: "f6" },
-      { label: "F7", value: "f7" }, { label: "F8", value: "f8" }, { label: "F9", value: "f9" },
-      { label: "F10", value: "f10" }, { label: "F11", value: "f11" }, { label: "F12", value: "f12" },
-      { label: "PrtSc", value: "print_screen", width: "w3" }
-    ],
-    [
-      { label: "2", value: "2" }, { label: "&", value: "&" }, { label: "E", value: "e" },
-      { label: "\"", value: "\"" }, { label: "'", value: "'" }, { label: "(", value: "(" },
-      { label: "-", value: "-" }, { label: "_", value: "_" }, { label: "^", value: "^" },
-      { label: ")", value: ")" }, { label: "=", value: "=" }, { label: "$", value: "$" },
-      { label: "*", value: "*" }, { label: "Backspace", value: "backspace", width: "w4" },
-      { label: "NumLock", value: "num_lock", width: "w3" }, { label: "N7", value: "numpad_7" },
-      { label: "N8", value: "numpad_8" }, { label: "N9", value: "numpad_9" }, { label: "N/", value: "numpad_divide" }
-    ],
-    [
-      { label: "Tab", value: "tab", width: "w3" }, { label: "A", value: "a" }, { label: "Z", value: "z" },
-      { label: "E", value: "e" }, { label: "R", value: "r" }, { label: "T", value: "t" },
-      { label: "Y", value: "y" }, { label: "U", value: "u" }, { label: "I", value: "i" },
-      { label: "O", value: "o" }, { label: "P", value: "p" }, { label: "^", value: "^" },
-      { label: "$", value: "$" }, { label: "\\", value: "\\" }, { label: "N4", value: "numpad_4" },
-      { label: "N5", value: "numpad_5" }, { label: "N6", value: "numpad_6" }, { label: "N*", value: "numpad_multiply" }
-    ],
-    [
-      { label: "Caps", value: "caps_lock", width: "w4" }, { label: "Q", value: "q" }, { label: "S", value: "s" },
-      { label: "D", value: "d" }, { label: "F", value: "f" }, { label: "G", value: "g" },
-      { label: "H", value: "h" }, { label: "J", value: "j" }, { label: "K", value: "k" },
-      { label: "L", value: "l" }, { label: "M", value: "m" }, { label: "U", value: "u" },
-      { label: "Enter", value: "enter", width: "w4" }, { label: "N1", value: "numpad_1" },
-      { label: "N2", value: "numpad_2" }, { label: "N3", value: "numpad_3" }, { label: "N-", value: "numpad_subtract" }
-    ],
-    [
-      { label: "Shift", value: "shift", width: "w5" }, { label: "W", value: "w" }, { label: "X", value: "x" },
-      { label: "C", value: "c" }, { label: "V", value: "v" }, { label: "B", value: "b" },
-      { label: "N", value: "n" }, { label: ",", value: "," }, { label: ";", value: ";" },
-      { label: ":", value: ":" }, { label: "!", value: "!" }, { label: "Shift", value: "shift", width: "w5" },
-      { label: "Up", value: "up" }, { label: "N0", value: "numpad_0", width: "w3" },
-      { label: "N.", value: "numpad_decimal" }, { label: "N+", value: "numpad_add", width: "w3" }
-    ],
-    [
-      { label: "Ctrl", value: "ctrl", width: "w3" }, { label: "Win", value: "cmd", width: "w3" },
-      { label: "Alt", value: "alt", width: "w3" }, { label: "Space", value: "space", width: "w6" },
-      { label: "Alt", value: "alt", width: "w3" }, { label: "Menu", value: "menu", width: "w3" },
-      { label: "Ctrl", value: "ctrl", width: "w3" }, { label: "Left", value: "left" },
-      { label: "Down", value: "down" }, { label: "Right", value: "right" }, { label: "Ins", value: "insert" },
-      { label: "Del", value: "delete" }, { label: "Home", value: "home" }, { label: "End", value: "end" },
-      { label: "PgUp", value: "page_up" }, { label: "PgDn", value: "page_down" }, { label: "NEnter", value: "numpad_enter", width: "w4" }
-    ]
+    [{ label: "Esc", value: "escape" }, { label: "F1", value: "f1" }, { label: "F2", value: "f2" }, { label: "F3", value: "f3" }, { label: "F4", value: "f4" }, { label: "F5", value: "f5" }, { label: "F6", value: "f6" }, { label: "F7", value: "f7" }, { label: "F8", value: "f8" }, { label: "F9", value: "f9" }, { label: "F10", value: "f10" }, { label: "F11", value: "f11" }, { label: "F12", value: "f12" }, { label: "PrtSc", value: "print_screen", units: 2 }],
+    [{ label: "2", value: "2" }, { label: "&", value: "&" }, { label: '"', value: '"' }, { label: "'", value: "'" }, { label: "(", value: "(" }, { label: "-", value: "-" }, { label: "_", value: "_" }, { label: ")", value: ")" }, { label: "=", value: "=" }, { label: "Backspace", value: "backspace", units: 2.4 }, { label: "N7", value: "numpad_7" }, { label: "N8", value: "numpad_8" }, { label: "N9", value: "numpad_9" }, { label: "N/", value: "numpad_divide" }],
+    [{ label: "Tab", value: "tab", units: 1.6 }, { label: "A", value: "a" }, { label: "Z", value: "z" }, { label: "E", value: "e" }, { label: "R", value: "r" }, { label: "T", value: "t" }, { label: "Y", value: "y" }, { label: "U", value: "u" }, { label: "I", value: "i" }, { label: "O", value: "o" }, { label: "P", value: "p" }, { label: "^", value: "^" }, { label: "$", value: "$" }, { label: "\\", value: "\\" }, { label: "N4", value: "numpad_4" }, { label: "N5", value: "numpad_5" }, { label: "N6", value: "numpad_6" }, { label: "N*", value: "numpad_multiply" }],
+    [{ label: "Caps", value: "caps_lock", units: 1.9 }, { label: "Q", value: "q" }, { label: "S", value: "s" }, { label: "D", value: "d" }, { label: "F", value: "f" }, { label: "G", value: "g" }, { label: "H", value: "h" }, { label: "J", value: "j" }, { label: "K", value: "k" }, { label: "L", value: "l" }, { label: "M", value: "m" }, { label: "U", value: "u" }, { label: "Enter", value: "enter", units: 2 }, { label: "N1", value: "numpad_1" }, { label: "N2", value: "numpad_2" }, { label: "N3", value: "numpad_3" }, { label: "N-", value: "numpad_subtract" }],
+    [{ label: "Shift", value: "shift", units: 2.3 }, { label: "W", value: "w" }, { label: "X", value: "x" }, { label: "C", value: "c" }, { label: "V", value: "v" }, { label: "B", value: "b" }, { label: "N", value: "n" }, { label: ",", value: "," }, { label: ";", value: ";" }, { label: ":", value: ":" }, { label: "!", value: "!" }, { label: "Shift", value: "shift", units: 2.1 }, { label: "Up", value: "up" }, { label: "N0", value: "numpad_0", units: 2 }, { label: "N.", value: "numpad_decimal" }, { label: "N+", value: "numpad_add" }],
+    [{ label: "Ctrl", value: "ctrl", units: 1.4 }, { label: "Win", value: "cmd", units: 1.2 }, { label: "Alt", value: "alt", units: 1.2 }, { label: "Space", value: "space", units: 5 }, { label: "Alt", value: "alt", units: 1.2 }, { label: "Menu", value: "menu", units: 1.2 }, { label: "Ctrl", value: "ctrl", units: 1.4 }, { label: "Left", value: "left" }, { label: "Down", value: "down" }, { label: "Right", value: "right" }, { label: "Ins", value: "insert" }, { label: "Del", value: "delete" }, { label: "Home", value: "home" }, { label: "End", value: "end" }, { label: "PgUp", value: "page_up" }, { label: "PgDn", value: "page_down" }, { label: "NEnt", value: "numpad_enter", units: 1.8 }]
   ]
 };
 
@@ -135,13 +50,35 @@ function setStatus(text, isError = false) {
   statusLine.style.color = isError ? "#ff8ea2" : "#49b3ff";
 }
 
+function detectDeviceName() {
+  const ua = navigator.userAgent || "";
+  const platform = navigator.platform || "";
+  let base = "Phone";
+  if (/iPhone/i.test(ua)) base = "iPhone";
+  else if (/iPad/i.test(ua)) base = "iPad";
+  else if (/Android/i.test(ua)) base = "Android";
+  else if (/Windows/i.test(platform)) base = "Windows Device";
+  else if (/Mac/i.test(platform)) base = "Mac Device";
+  return base;
+}
+
+function updateOrientationState() {
+  if (!joined) return;
+  const isLandscape = window.matchMedia("(orientation: landscape)").matches;
+  rotateWarning.classList.toggle("hidden", isLandscape);
+}
+
 function connect() {
   ws = new WebSocket(wsUrl("/ws/mobile"));
-  ws.onopen = () => setStatus("Connected to server.");
+  ws.onopen = () => {
+    setStatus("Connected to server.");
+    if (lastJoinPayload) {
+      ws.send(JSON.stringify(lastJoinPayload));
+    }
+  };
   ws.onclose = () => {
     setStatus("Disconnected. Reconnecting...");
-    joined = false;
-    setTimeout(connect, 1500);
+    setTimeout(connect, 1200);
   };
   ws.onerror = () => setStatus("WebSocket error", true);
   ws.onmessage = (event) => onMessage(event.data);
@@ -151,7 +88,7 @@ function onMessage(raw) {
   let data = {};
   try {
     data = JSON.parse(raw);
-  } catch (e) {
+  } catch (_err) {
     return;
   }
   if (data.type === "joined_room") {
@@ -162,17 +99,27 @@ function onMessage(raw) {
     infoRoom.textContent = data.room_code;
     infoAgent.textContent = data.agent_connected ? "online" : "offline";
     setStatus(`Joined room ${data.room_code}.`);
+    updateOrientationState();
     return;
   }
   if (data.type === "room_status") {
     infoAgent.textContent = data.agent_connected ? "online" : "offline";
     return;
   }
+  if (data.type === "screen_frame") {
+    if (typeof data.jpeg === "string" && data.jpeg.length) {
+      screenPreview.src = `data:image/jpeg;base64,${data.jpeg}`;
+      previewEmpty.classList.add("hidden");
+    }
+    return;
+  }
   if (data.type === "room_closed") {
     setStatus(data.message || "Room closed.");
     joined = false;
+    activeModifiers.clear();
     controlSection.classList.add("hidden");
     joinSection.classList.remove("hidden");
+    previewEmpty.classList.remove("hidden");
     return;
   }
   if (data.type === "warning") {
@@ -192,7 +139,7 @@ function sendControl(eventPayload) {
 joinBtn.addEventListener("click", () => {
   const roomCode = roomCodeInput.value.trim().toUpperCase();
   const password = roomPasswordInput.value.trim();
-  const deviceName = deviceNameInput.value.trim() || "Phone";
+  const deviceName = (deviceNameInput.value.trim() || detectDeviceName()).slice(0, 40);
   if (!roomCode || !password) {
     setStatus("Enter room code and password.", true);
     return;
@@ -201,14 +148,14 @@ joinBtn.addEventListener("click", () => {
     setStatus("Connection not ready.", true);
     return;
   }
-  ws.send(
-    JSON.stringify({
-      type: "join_room",
-      room_code: roomCode,
-      password,
-      device_name: deviceName
-    })
-  );
+  const payload = {
+    type: "join_room",
+    room_code: roomCode,
+    password,
+    device_name: deviceName
+  };
+  lastJoinPayload = payload;
+  ws.send(JSON.stringify(payload));
 });
 
 function renderKeyboard() {
@@ -219,9 +166,13 @@ function renderKeyboard() {
     rowEl.className = "kb-row";
     for (const key of row) {
       const btn = document.createElement("button");
-      btn.className = `kb-key ${key.width || ""}`.trim();
+      btn.className = "kb-key";
       btn.textContent = key.label;
       btn.dataset.value = key.value;
+      btn.style.flex = `${key.units || 1} ${key.units || 1} 0`;
+      if (modifierKeys.has(key.value) && activeModifiers.has(key.value)) {
+        btn.classList.add("mod-active");
+      }
       btn.addEventListener("click", () => handleKeyPress(key.value));
       rowEl.appendChild(btn);
     }
@@ -238,16 +189,13 @@ function handleKeyPress(value) {
       activeModifiers.add(value);
       setStatus(`Modifier active: ${[...activeModifiers].join(" + ")}`);
     }
+    renderKeyboard();
     return;
   }
-
   if (activeModifiers.size) {
-    sendControl({
-      kind: "key_combo",
-      modifiers: [...activeModifiers],
-      key: value
-    });
+    sendControl({ kind: "key_combo", modifiers: [...activeModifiers], key: value });
     activeModifiers.clear();
+    renderKeyboard();
   } else {
     sendControl({ kind: "key_tap", key: value });
   }
@@ -258,8 +206,7 @@ renderKeyboard();
 
 for (const btn of document.querySelectorAll("[data-mouse]")) {
   btn.addEventListener("click", () => {
-    const button = btn.dataset.mouse;
-    sendControl({ kind: "mouse_click", button });
+    sendControl({ kind: "mouse_click", button: btn.dataset.mouse });
   });
 }
 
@@ -273,36 +220,65 @@ for (const btn of document.querySelectorAll("[data-scroll]")) {
 let pointerActive = false;
 let lastX = 0;
 let lastY = 0;
-const sensitivity = 1.35;
+const sensitivity = 1.3;
+
+function startMove(x, y) {
+  pointerActive = true;
+  lastX = x;
+  lastY = y;
+}
+
+function moveTo(x, y) {
+  if (!pointerActive) return;
+  const dx = (x - lastX) * sensitivity;
+  const dy = (y - lastY) * sensitivity;
+  lastX = x;
+  lastY = y;
+  if (Math.abs(dx) < 0.2 && Math.abs(dy) < 0.2) return;
+  sendControl({ kind: "mouse_move", dx, dy });
+}
+
+function stopMove() {
+  pointerActive = false;
+}
 
 trackpad.addEventListener("pointerdown", (event) => {
-  pointerActive = true;
-  lastX = event.clientX;
-  lastY = event.clientY;
   trackpad.setPointerCapture(event.pointerId);
+  startMove(event.clientX, event.clientY);
 });
 
 trackpad.addEventListener("pointermove", (event) => {
-  if (!pointerActive) return;
-  const dx = (event.clientX - lastX) * sensitivity;
-  const dy = (event.clientY - lastY) * sensitivity;
-  lastX = event.clientX;
-  lastY = event.clientY;
-  if (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) return;
-  sendControl({ kind: "mouse_move", dx, dy });
+  moveTo(event.clientX, event.clientY);
 });
 
-function endPointer(event) {
-  pointerActive = false;
-  try {
-    trackpad.releasePointerCapture(event.pointerId);
-  } catch (e) {
-    // Ignore capture release errors on some mobile browsers.
-  }
+trackpad.addEventListener("pointerup", () => stopMove());
+trackpad.addEventListener("pointercancel", () => stopMove());
+trackpad.addEventListener("pointerleave", () => stopMove());
+
+trackpad.addEventListener("touchstart", (event) => {
+  event.preventDefault();
+  const t = event.touches[0];
+  if (!t) return;
+  startMove(t.clientX, t.clientY);
+}, { passive: false });
+
+trackpad.addEventListener("touchmove", (event) => {
+  event.preventDefault();
+  const t = event.touches[0];
+  if (!t) return;
+  moveTo(t.clientX, t.clientY);
+}, { passive: false });
+
+trackpad.addEventListener("touchend", () => stopMove());
+trackpad.addEventListener("touchcancel", () => stopMove());
+
+if (!deviceNameInput.value.trim()) {
+  deviceNameInput.value = detectDeviceName();
+} else if (deviceNameInput.value === "My Phone") {
+  deviceNameInput.value = detectDeviceName();
 }
 
-trackpad.addEventListener("pointerup", endPointer);
-trackpad.addEventListener("pointercancel", endPointer);
-trackpad.addEventListener("pointerleave", endPointer);
+window.addEventListener("orientationchange", updateOrientationState);
+window.addEventListener("resize", updateOrientationState);
 
 connect();
